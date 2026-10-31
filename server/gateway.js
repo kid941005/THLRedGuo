@@ -29,6 +29,38 @@ const { proxy } = require('./lib/proxy');
 const startedAt = Date.now();
 
 /**
+ * 内置网页界面：单文件，读一次后在内存里缓存。
+ * 带 mtime 校验，改完文件不用重启也能生效（本地调试方便）。
+ */
+let webCache = { mtimeMs: 0, body: null };
+function readWebIndex() {
+  try {
+    const st = fs.statSync(config.WEB_INDEX);
+    if (webCache.body && webCache.mtimeMs === st.mtimeMs) return webCache.body;
+    const body = fs.readFileSync(config.WEB_INDEX);
+    webCache = { mtimeMs: st.mtimeMs, body };
+    return body;
+  } catch (e) {
+    console.error('[gateway] 读取网页界面失败:', config.WEB_INDEX, e.message);
+    return null;
+  }
+}
+
+function serveWeb(req, res) {
+  const body = readWebIndex();
+  if (!body) {
+    return sendJson(res, 500, { error: 'WEB_INDEX_MISSING', detail: '镜像里缺少 server/web/index.html' });
+  }
+  res.writeHead(200, {
+    'content-type': 'text/html; charset=utf-8',
+    'content-length': body.length,
+    'cache-control': 'no-store',
+  });
+  if (req.method === 'HEAD') return res.end();
+  res.end(body);
+}
+
+/**
  * 读取 spider 并注入基址。
  * 用 split/join 而不是 String.replace：replace 只替换第一次出现，
  * 且会被文件注释里的同名字样抢先命中。
@@ -78,6 +110,7 @@ function indexPayload() {
   return {
     service: 'thlredguo-gateway',
     endpoints: {
+      ui: '/',
       spider: '/sources/hongguo_gw.js',
       proxy: '/gw/{rank,episodes,search,stream,browse,latest,play}',
       health: '/healthz',
@@ -102,7 +135,12 @@ const server = http.createServer((req, res) => {
     return proxy(req, res, pathname.slice(3));
   }
 
+  // 浏览器打开根路径给界面；脚本想要端点清单用 /api
   if (pathname === '/' || pathname === '/index.html') {
+    return serveWeb(req, res);
+  }
+
+  if (pathname === '/api' || pathname === '/api/') {
     return sendJson(res, 200, indexPayload());
   }
 

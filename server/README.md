@@ -14,6 +14,7 @@ server/
 │   ├── upstream.js          # 内置服务守护、密钥托管、设备身份备份
 │   ├── proxy.js             # /gw/* 反向代理（含 401 重取密钥后重放）
 │   └── cache.js             # 解密流缓存清理（TTL + 容量）
+├── web/index.html           # 内置网页界面（单文件，零外链）
 ├── Dockerfile
 └── vendor/hongguo-web/      # 第三方 MIT 组件（见 LICENSE），提供签名/解密/取流
     └── server/src/main.js   # 内置服务，容器内监听 127.0.0.1:8000
@@ -50,6 +51,14 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 避免之后 `pull` 被本地产物遮蔽（这是把 `build` 与 `image` 写在同一文件里的常见坑）。
 
 端口冲突时改宿主机端口：`GW_PORT=18080 docker compose up -d`。
+
+### 浏览器验证
+
+起服务后直接打开 `http://<服务器IP>:8080/`（端口映射到别处就换成你的端口，例如 NAS 上的 `31080`），
+会看到内置的剧库页面：顶部是榜单/分类标签，点卡片可看简介与分集，选一集直接在页面里播放。
+
+页面完全本地化（无 CDN、无外链脚本），断网也能打开界面；封面图来自上游 CDN，取不到时留白不报错。
+如果列表是空的，页面会明确区分「上游风控返回空」和「请求失败」——前者等一会儿再试就行。
 
 ### 网络暴露（重要）
 
@@ -111,7 +120,8 @@ curl http://127.0.0.1:8080/healthz
 | `GET /healthz` | 健康检查（是否就绪、是否已拿到 api key） |
 | `GET /sources/hongguo_gw.js` | 下发数据源脚本（自动注入基址与默认清晰度） |
 | `ANY /gw/*` | 反代到内置服务，自动补 `x-api-key` |
-| `GET /` | 端点自述 |
+| `GET /` | 内置网页界面（浏览器直接打开，可浏览/搜索/播放） |
+| `GET /api` | 端点自述 JSON（脚本用；原 `/` 的返回） |
 
 `/gw/` 下可用：`rank` `browse` `latest` `search` `episodes` `play` `stream` `video_url` `img`。
 密钥由网关进程启动时自动向内置服务申请，客户端不需要也不应该知道。

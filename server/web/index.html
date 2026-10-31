@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>红果网关 · 剧库</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --line: #2a2f3a;
+    --txt: #e6e8ee;
+    --dim: #98a0b3;
+    --accent: #ff5a5f;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--txt);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    padding: 12px 16px;
+    background: rgba(15, 17, 21, .92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { font-size: 16px; font-weight: 600; letter-spacing: .5px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #6b7280; margin-left: 6px; vertical-align: middle; }
+  .dot.ok { background: #22c55e; }
+  .dot.bad { background: #ef4444; }
+  form { display: flex; gap: 8px; flex: 1; min-width: 240px; max-width: 460px; }
+  input[type="search"] {
+    flex: 1; padding: 8px 12px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--txt);
+    outline: none; font-size: 14px;
+  }
+  input[type="search"]:focus { border-color: var(--accent); }
+  button {
+    padding: 8px 14px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--txt);
+    font-size: 14px;
+  }
+  button:hover { border-color: var(--accent); }
+  nav { display: flex; gap: 8px; overflow-x: auto; padding: 12px 16px 0; }
+  nav button { white-space: nowrap; border-radius: 999px; padding: 6px 14px; }
+  nav button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  main {
+    display: grid; gap: 14px; padding: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    overflow: hidden; cursor: pointer; transition: border-color .15s, transform .15s;
+  }
+  .card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .card .pic { aspect-ratio: 3 / 4; background: var(--panel-2); position: relative; }
+  .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .card .rank {
+    position: absolute; left: 8px; top: 8px;
+    background: rgba(0,0,0,.65); padding: 1px 7px; border-radius: 6px;
+    font-size: 12px; font-weight: 600;
+  }
+  .card .meta { padding: 8px 10px 10px; }
+  .card .title { font-size: 13px; line-height: 1.35; height: 2.7em; overflow: hidden; }
+  .card .sub { color: var(--dim); font-size: 12px; margin-top: 4px; }
+  .empty, .note {
+    grid-column: 1 / -1; padding: 28px 16px; text-align: center; color: var(--dim);
+    border: 1px dashed var(--line); border-radius: var(--radius);
+  }
+  .note b { color: var(--txt); }
+  #more { padding: 0 16px 32px; text-align: center; }
+  .sheet {
+    position: fixed; inset: 0; z-index: 40; display: none;
+    background: rgba(0,0,0,.72); padding: 16px; overflow: auto;
+  }
+  .sheet.open { display: block; }
+  .sheet-inner {
+    max-width: 900px; margin: 0 auto; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 14px; padding: 16px;
+  }
+  .sheet-head { display: flex; gap: 14px; }
+  .sheet-head img { width: 108px; aspect-ratio: 3/4; object-fit: cover; border-radius: 8px; background: var(--panel-2); }
+  .sheet-head h2 { margin: 0 0 6px; font-size: 17px; }
+  .sheet-head p { margin: 0; color: var(--dim); font-size: 13px; max-height: 5.2em; overflow: auto; }
+  .close { margin-left: auto; align-self: flex-start; }
+  video { width: 100%; margin-top: 14px; border-radius: 10px; background: #000; aspect-ratio: 9 / 16; max-height: 62vh; }
+  .eps { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; max-height: 26vh; overflow: auto; }
+  .eps button { padding: 6px 12px; border-radius: 8px; font-size: 13px; }
+  .eps button[aria-current="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    background: #2b1d1f; border: 1px solid #7f1d1d; color: #fecaca;
+    padding: 10px 16px; border-radius: 10px; max-width: 90vw; z-index: 60; display: none;
+  }
+  .toast.show { display: block; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">红果网关<span id="status" class="dot" title="网关状态"></span></div>
+  <form id="search-form">
+    <input id="q" type="search" placeholder="搜索剧名，如：霸总 / 归路" autocomplete="off">
+    <button type="submit">搜索</button>
+  </form>
+  <a href="/healthz" target="_blank" rel="noreferrer"><button type="button">状态</button></a>
+</header>
+
+<nav id="tabs"></nav>
+<main id="grid"></main>
+<div id="more" hidden><button id="more-btn">加载更多</button></div>
+
+<div id="sheet" class="sheet">
+  <div class="sheet-inner">
+    <div class="sheet-head">
+      <img id="d-cover" alt="">
+      <div style="flex:1">
+        <h2 id="d-title">—</h2>
+        <p id="d-desc"></p>
+        <p id="d-meta" style="margin-top:8px"></p>
+      </div>
+      <button class="close" id="d-close">关闭</button>
+    </div>
+    <video id="d-video" controls playsinline preload="none" hidden></video>
+    <div class="eps" id="d-eps"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var TABS = [
+    { id: 'board-recommend', name: '推荐榜', kind: 'rank', board: 'recommend' },
+    { id: 'board-hot',       name: '热播榜', kind: 'rank', board: 'hot' },
+    { id: 'board-new',       name: '新剧榜', kind: 'rank', board: 'new' },
+    { id: 'genre-short_play',   name: '短剧',  kind: 'genre', genre: 'short_play' },
+    { id: 'genre-comic_series', name: '漫剧',  kind: 'genre', genre: 'comic_series' },
+    { id: 'genre-ai_series',    name: 'AI短剧', kind: 'genre', genre: 'ai_series' }
+  ];
+  var PAGE = 18;
+
+  var el = {
+    tabs: document.getElementById('tabs'),
+    grid: document.getElementById('grid'),
+    more: document.getElementById('more'),
+    moreBtn: document.getElementById('more-btn'),
+    status: document.getElementById('status'),
+    form: document.getElementById('search-form'),
+    q: document.getElementById('q'),
+    sheet: document.getElementById('sheet'),
+    cover: document.getElementById('d-cover'),
+    title: document.getElementById('d-title'),
+    desc: document.getElementById('d-desc'),
+    meta: document.getElementById('d-meta'),
+    video: document.getElementById('d-video'),
+    eps: document.getElementById('d-eps'),
+    close: document.getElementById('d-close'),
+    toast: document.getElementById('toast')
+  };
+
+  var state = { tab: TABS[0], keyword: '', offset: 0, hasMore: false, loading: false };
+
+  function toast(msg) {
+    el.toast.textContent = msg;
+    el.toast.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { el.toast.classList.remove('show'); }, 4200);
+  }
+
+  function api(path) {
+    return fetch(path, { headers: { Accept: 'application/json' } }).then(function (r) {
+      if (!r.ok) {
+        return r.text().then(function (t) {
+          var detail = '';
+          try { var j = JSON.parse(t); detail = j.detail || j.error || ''; } catch (e) {}
+          throw new Error('HTTP ' + r.status + (detail ? ' · ' + detail : ''));
+        });
+      }
+      return r.json();
+    });
+  }
+
+  /** 上游被风控时接口结构正常但列表为空，必须和后端故障区分开 */
+  function emptyHint(where) {
+    return '<div class="note">' + where + '没有数据。<br><b>如果刚才还能用</b>，多半是上游风控：' +
+      '同一出口 IP 请求过于频繁，或设备身份被拒。稍等片刻再试，' +
+      '或把容器出口换成更稳定的 IP。</div>';
+  }
+
+  function card(item, index) {
+    var box = document.createElement('div');
+    box.className = 'card';
+
+    var pic = document.createElement('div');
+    pic.className = 'pic';
+    if (item.cover) {
+      var img = document.createElement('img');
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      img.src = item.cover;
+      img.alt = item.title || '';
+      img.onerror = function () { img.remove(); };
+      pic.appendChild(img);
+    }
+    if (item.rank) {
+      var r = document.createElement('span');
+      r.className = 'rank';
+      r.textContent = '#' + item.rank;
+      pic.appendChild(r);
+    }
+
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    var t = document.createElement('div');
+    t.className = 'title';
+    t.textContent = item.title || ('短剧 ' + (item.series_id || ''));
+    var sub = document.createElement('div');
+    sub.className = 'sub';
+    var bits = [];
+    if (item.episode_cnt) bits.push(item.episode_cnt + ' 集');
+    if (item.score) bits.push('评分 ' + item.score);
+    if (item.copyright) bits.push(item.copyright);
+    sub.textContent = bits.join(' · ') || '\u00a0';
+    meta.appendChild(t);
+    meta.appendChild(sub);
+
+    box.appendChild(pic);
+    box.appendChild(meta);
+    box.addEventListener('click', function () { openDetail(item); });
+    return box;
+  }
+
+  function render(items, append) {
+    if (!append) el.grid.innerHTML = '';
+    items.forEach(function (it, i) { el.grid.appendChild(card(it, state.offset + i)); });
+  }
+
+  function setTabs() {
+    el.tabs.innerHTML = '';
+    TABS.forEach(function (tab) {
+      var b = document.createElement('button');
+      b.textContent = tab.name;
+      b.setAttribute('aria-selected', String(tab.id === state.tab.id));
+      b.addEventListener('click', function () {
+        if (state.tab.id === tab.id && !state.keyword) return;
+        state.tab = tab;
+        state.keyword = '';
+        el.q.value = '';
+        load(true);
+      });
+      el.tabs.appendChild(b);
+    });
+  }
+
+  function load(reset) {
+    if (state.loading) return;
+    state.loading = true;
+    if (reset) { state.offset = 0; el.more.hidden = true; }
+    el.grid.setAttribute('aria-busy', 'true');
+
+    var url;
+    if (state.keyword) {
+      url = '/gw/search?q=' + encodeURIComponent(state.keyword) +
+        '&limit=' + PAGE + '&offset=' + state.offset;
+    } else if (state.tab.kind === 'rank') {
+      url = '/gw/rank?board=' + encodeURIComponent(state.tab.board) + '&limit=30';
+    } else {
+      url = '/gw/browse?genre=' + encodeURIComponent(state.tab.genre) +
+        '&limit=' + PAGE + '&offset=' + state.offset;
+    }
+
+    api(url).then(function (data) {
+      var items = data.items || data.results || [];
+      if (reset && items.length === 0) {
+        el.grid.innerHTML = emptyHint(state.keyword ? '搜索' : '这个分类');
+        el.more.hidden = true;
+        return;
+      }
+      render(items, !reset);
+      state.offset += items.length;
+      state.hasMore = data.has_more === true;
+      el.more.hidden = !state.hasMore;
+    }).catch(function (e) {
+      if (reset) el.grid.innerHTML = '<div class="note">加载失败：' + e.message + '</div>';
+      toast('请求失败：' + e.message);
+    }).then(function () {
+      state.loading = false;
+      el.grid.removeAttribute('aria-busy');
+    });
+  }
+
+  /** 打开详情：先拿分集，再按需起播 */
+  function openDetail(item) {
+    el.sheet.classList.add('open');
+    el.title.textContent = item.title || '';
+    el.desc.textContent = item.abstract || '（暂无简介）';
+    el.meta.textContent = [
+      item.episode_cnt ? item.episode_cnt + ' 集' : '',
+      item.score ? '评分 ' + item.score : '',
+      item.copyright || ''
+    ].filter(Boolean).join(' · ');
+    el.cover.removeAttribute('src');
+    if (item.cover) { el.cover.src = item.cover; el.cover.referrerPolicy = 'no-referrer'; }
+    el.eps.innerHTML = '<div class="note">正在读取分集…</div>';
+    el.video.hidden = true;
+    el.video.removeAttribute('src');
+
+    api('/gw/episodes?series_id=' + encodeURIComponent(item.series_id))
+      .then(function (data) {
+        var episodes = data.episodes || [];
+        if (!episodes.length) {
+          el.eps.innerHTML = '<div class="note">这部剧没有取到分集（可能已下架或被风控）。</div>';
+          return;
+        }
+        el.eps.innerHTML = '';
+        episodes.forEach(function (ep, i) {
+          var b = document.createElement('button');
+          b.textContent = '第 ' + (ep.index || i + 1) + ' 集';
+          b.addEventListener('click', function () {
+            Array.prototype.forEach.call(el.eps.children, function (c) {
+              c.setAttribute('aria-current', 'false');
+            });
+            b.setAttribute('aria-current', 'true');
+            playEpisode(ep);
+          });
+          el.eps.appendChild(b);
+        });
+      })
+      .catch(function (e) {
+        el.eps.innerHTML = '<div class="note">读取分集失败：' + e.message + '</div>';
+      });
+  }
+
+  function playEpisode(ep) {
+    var url = '/gw/stream?vid=' + encodeURIComponent(ep.vid) + '&quality=best';
+    el.video.hidden = false;
+    el.video.src = url;
+    el.video.play().catch(function () { /* 自动播放被拦截时交给用户点播放 */ });
+    el.video.onerror = function () {
+      toast('这一集取流失败：网关没能从上游拿到片子（常见于风控），可稍后重试或换一集。');
+    };
+  }
+
+  el.close.addEventListener('click', function () {
+    el.sheet.classList.remove('open');
+    el.video.pause();
+    el.video.removeAttribute('src');
+    el.video.load();
+  });
+  el.sheet.addEventListener('click', function (e) {
+    if (e.target === el.sheet) el.close.click();
+  });
+
+  el.form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var kw = el.q.value.trim();
+    if (!kw) return;
+    state.keyword = kw;
+    load(true);
+  });
+
+  el.moreBtn.addEventListener('click', function () { load(false); });
+
+  function poll() {
+    fetch('/healthz', { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.json().catch(function () { return {}; }); })
+      .then(function (h) {
+        el.status.className = 'dot ' + (h.ok ? 'ok' : 'bad');
+        el.status.title = h.ok ? '网关已就绪' : '内置服务未就绪（详见 /healthz）';
+      })
+      .catch(function () { el.status.className = 'dot bad'; el.status.title = '网关无响应'; });
+  }
+
+  setTabs();
+  load(true);
+  poll();
+  setInterval(poll, 15000);
+})();
+</script>
+</body>
+</html>

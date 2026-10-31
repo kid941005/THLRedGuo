@@ -18,6 +18,9 @@ const UPSTREAM = `http://127.0.0.1:${HK_PORT}`;
 
 /** 仓库内的两份资源：下发的 spider 与第三方服务入口 */
 const SPIDER_FILE = path.join(__dirname, '..', '..', 'assets', 'sources', 'hongguo_gw.js');
+
+/** 内置网页界面（单文件，无构建步骤、无外链依赖） */
+const WEB_INDEX = path.join(__dirname, '..', 'web', 'index.html');
 const VENDOR_ENTRY = path.join(
   __dirname,
   '..',
@@ -54,6 +57,7 @@ module.exports = {
   QUALITY,
   UPSTREAM,
   SPIDER_FILE,
+  WEB_INDEX,
   VENDOR_ENTRY,
   VENDOR_ROOT,
   VENDOR_KEY_FILE,

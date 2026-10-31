@@ -112,6 +112,7 @@ jobs:
             test -f /app/server/gateway.js
             test -f /app/server/lib/proxy.js
             test -f /app/server/lib/upstream.js
+            test -f /app/server/web/index.html
             test -f /app/assets/sources/hongguo_gw.js
             test -f /app/server/vendor/hongguo-web/server/src/main.js
             # 设备身份与运行期缓存绝不能进镜像（镜像会推到公开 GHCR）
@@ -132,6 +133,10 @@ jobs:
             fi
             sleep 2
           done
+          echo "--- 根路径应返回网页界面"
+          curl -fsS http://127.0.0.1:8080/ | head -3
+          curl -fsS http://127.0.0.1:8080/ | grep -qi "<!doctype html" || { echo "根路径不是 HTML"; exit 1; }
+          curl -fsS http://127.0.0.1:8080/api | grep -q '"service"' || { echo "/api 未返回端点清单"; exit 1; }
           docker logs gw-ci | tail -20
           docker rm -f gw-ci >/dev/null 2>&1 || true
           if [ "$ok" != "1" ]; then
