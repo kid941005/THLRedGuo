@@ -1,9 +1,11 @@
 services:
   hongguo-gateway:
+    # 默认拉取 CI 构建好的镜像；GW_TAG 可指定版本，如 GW_TAG=v1.1.1
+    image: ghcr.io/kid941005/thlredguo-gateway:${GW_TAG:-latest}
+    # 本地改代码或无法拉镜像时：docker compose up -d --build
     build:
       context: .
       dockerfile: server/Dockerfile
-    image: thlredguo-gateway:latest
     container_name: thlredguo-gateway
     ports:
       - "8080:8080"

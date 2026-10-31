@@ -16,10 +16,29 @@ assets/sources/hongguo_gw.js # 下发给客户端的数据源脚本（占位符�
 
 ## 起服务
 
+镜像由 GitHub Actions 构建并推送到 GHCR（`linux/amd64` + `linux/arm64`），默认直接拉取：
+
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 curl http://127.0.0.1:8080/healthz
 ```
+
+想固定版本、避免 `latest` 漂移：
+
+```bash
+GW_TAG=v1.1.1 docker compose up -d
+```
+
+本地改了代码、或目标机拉不到镜像时，改为现场构建：
+
+```bash
+docker compose up -d --build
+```
+
+> 包默认是 **Private**，拉取前需登录：
+> `echo $GITHUB_TOKEN | docker login ghcr.io -u <你的GitHub用户名> --password-stdin`
+> 想改成公开（无需登录即可拉）可在 GitHub 包设置里改 visibility，属于公开动作，自行决定。
 
 预期返回：
 
