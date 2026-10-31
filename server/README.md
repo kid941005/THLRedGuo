@@ -51,6 +51,20 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 端口冲突时改宿主机端口：`GW_PORT=18080 docker compose up -d`。
 
+### 网络暴露（重要）
+
+网关**没有鉴权**：`/gw/*` 谁都能调，调用方借的是容器里的设备身份。
+所以默认只绑定回环地址（`GW_BIND` 默认 `127.0.0.1`），此时只有宿主机自己能访问。
+
+| 场景 | 做法 |
+| :--- | :--- |
+| 只有本机用（例如同机转码/调试） | 保持默认，不动 |
+| 电视/手机在同一局域网 | `GW_BIND=0.0.0.0 docker compose up -d`，并确保该端口不暴露到公网 |
+| 需要公网访问 | 保持回环，前面挂一层带鉴权（Basic Auth / IP 白名单）的反向代理，把 `/sources/*` 与 `/gw/*` 转发进来 |
+
+导入脚本时地址要跟着改：局域网场景填 `http://<局域网IP>:8080/sources/hongguo_gw.js`；
+反向代理场景填对外域名，并给网关设 `PUBLIC_BASE=https://你的域名`（否则脚本里注入的是内网地址）。
+
 > 包可见性继承仓库：当前仓库公开，镜像同样**公开**，无需登录即可拉取。
 > 若日后仓库转为私有，需先 `docker login ghcr.io -u <用户名> -p <PAT>`。
 > 已验证镜像包含 `linux/amd64` 与 `linux/arm64` 两个架构。

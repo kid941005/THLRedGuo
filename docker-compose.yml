@@ -9,6 +9,7 @@
 # 常用变量（也可写进同目录 .env）：
 #   GW_TAG=v1.1.1     固定镜像版本，默认 latest
 #   GW_PORT=8080      宿主机端口
+#   GW_BIND=127.0.0.1 监听地址，默认只允许本机；局域网访问设 0.0.0.0（网关无鉴权）
 
 name: thlredguo
 
@@ -21,8 +22,11 @@ services:
     restart: unless-stopped
     stop_grace_period: 15s
 
+    # 默认只监听回环：网关不带鉴权，任何能访问端口的人都能借你的设备身份取流。
+    # 需要局域网 / 外网访问时显式放开：GW_BIND=0.0.0.0 docker compose up -d
+    # 更稳妥的做法是保持回环，前面挂一层带鉴权的反向代理。
     ports:
-      - "${GW_PORT:-8080}:8080"
+      - "${GW_BIND:-127.0.0.1}:${GW_PORT:-8080}:8080"
 
     environment:
       PORT: "8080"

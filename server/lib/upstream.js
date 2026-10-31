@@ -26,6 +26,11 @@ const {
 
 const state = { child: null, ready: false, key: '' };
 
+/** 崩溃重启的退避参数：连续失败时拉长间隔，就绪后复位 */
+const RESTART_BASE_MS = 3000;
+const RESTART_MAX_MS = 60000;
+let restartDelay = RESTART_BASE_MS;
+
 // ---------------------------------------------------------------- 身份备份
 
 /** 启动前还原设备身份：容器重建后镜像内的 apikeys.json 已丢，从卷里恢复 */
@@ -94,6 +99,11 @@ function start() {
     console.error('[gateway] 内置服务退出，code=', code);
     state.ready = false;
     state.key = '';
+    // 连续崩溃时指数退避（3s → 6s → 12s … 上限 60s）：
+    // 配置错误会让子进程立刻退出，固定 3 秒重试只会把日志刷满
+    const delay = restartDelay;
+    restartDelay = Math.min(restartDelay * 2, RESTART_MAX_MS);
+    console.error(`[gateway] ${Math.round(delay / 1000)} 秒后重启内置服务`);
     setTimeout(() => {
       start();
       // 重启后必须重新探测就绪并取新密钥，否则健康检查会一直停在 false
@@ -101,7 +111,7 @@ function start() {
         if (ok) ensureKey(false);
         else console.error('[gateway] 内置服务重启后仍未就绪');
       });
-    }, 3000);
+    }, delay);
   });
   return child;
 }
@@ -145,6 +155,8 @@ async function wait(timeoutMs) {
       const { status } = await httpJson(`${UPSTREAM}/health`);
       if (status === 200) {
         state.ready = true;
+        // 起来了就复位退避，下次崩溃仍从 3 秒开始
+        restartDelay = RESTART_BASE_MS;
         return true;
       }
     } catch (_) {}
