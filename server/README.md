@@ -7,7 +7,13 @@
 
 ```
 server/
-├── gateway.js               # 本仓库代码：对外 8080，下发 spider、反代 /gw/*、注入 api key
+├── gateway.js               # 入口：只装路由与启停生命周期
+├── lib/
+│   ├── config.js            # 路径与环境变量（唯一取值处）
+│   ├── http.js              # JSON 响应、对外基址推导
+│   ├── upstream.js          # 内置服务守护、密钥托管、设备身份备份
+│   ├── proxy.js             # /gw/* 反向代理（含 401 重取密钥后重放）
+│   └── cache.js             # 解密流缓存清理（TTL + 容量）
 ├── Dockerfile
 └── vendor/hongguo-web/      # 第三方 MIT 组件（见 LICENSE），提供签名/解密/取流
     └── server/src/main.js   # 内置服务，容器内监听 127.0.0.1:8000

@@ -1095,13 +1095,7 @@ class DartCoreEngine {
           caseSensitive: false,
         ).hasMatch(chapter['url'] as String)) {
       final streamUrl = chapter['url'] as String;
-      final mimeType = streamUrl.contains('.m3u8')
-          ? 'application/x-mpegURL'
-          : 'video/mp4';
-      final detected = RegExp(
-        r'/(2160|1080|720|480|360)p[./]',
-      ).firstMatch(streamUrl);
-      final effectiveQuality = int.tryParse(detected?.group(1) ?? '') ?? 0;
+      final effectiveQuality = _qualityOfUrl(streamUrl);
       return {
         'url': streamUrl,
         'session': 'sess_${DateTime.now().microsecondsSinceEpoch}_$source',
@@ -1109,7 +1103,7 @@ class DartCoreEngine {
         'quality': effectiveQuality,
         'qualities': [if (effectiveQuality > 0) effectiveQuality],
         'local': false,
-        'mimeType': mimeType,
+        'mimeType': _mimeOfUrl(streamUrl),
         'danmakuId': '',
       };
     }
@@ -1137,17 +1131,20 @@ class DartCoreEngine {
   final Map<String, List<Map<String, dynamic>>> _companionChapters = {};
 
   /// 由取流结果构造播放计划
+  /// 从 URL 推断清晰度：服务端多数会在路径里带 360p / 720p 之类的标记
+  static int _qualityOfUrl(String url) {
+    final match = RegExp(r'/(2160|1080|720|480|360)p[./]').firstMatch(url);
+    return int.tryParse(match?.group(1) ?? '') ?? 0;
+  }
+
+  static String _mimeOfUrl(String url) =>
+      url.contains('.m3u8') ? 'application/x-mpegURL' : 'video/mp4';
+
   Map<String, dynamic> _playbackPlan(String source, CatPawPlayResult res) {
     final streamUrl = res.url;
-    final mimeType = streamUrl.contains('.m3u8')
-        ? 'application/x-mpegURL'
-        : 'video/mp4';
-    final detected = RegExp(
-      r'/(2160|1080|720|480|360)p[./]',
-    ).firstMatch(streamUrl);
     final effectiveQuality = res.quality > 0
         ? res.quality
-        : int.tryParse(detected?.group(1) ?? '') ?? 0;
+        : _qualityOfUrl(streamUrl);
     return {
       'url': streamUrl,
       'session': 'sess_${DateTime.now().microsecondsSinceEpoch}_$source',
@@ -1160,7 +1157,7 @@ class DartCoreEngine {
           ? res.qualities
           : [if (effectiveQuality > 0) effectiveQuality],
       'local': false,
-      'mimeType': mimeType,
+      'mimeType': _mimeOfUrl(streamUrl),
       'danmakuId': res.danmakuId,
       'servedBy': source,
     };

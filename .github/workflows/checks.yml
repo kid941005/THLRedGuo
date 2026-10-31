@@ -107,6 +107,8 @@ jobs:
           docker run --rm --entrypoint sh thlredguo-gateway:ci -c '
             set -e
             test -f /app/server/gateway.js
+            test -f /app/server/lib/proxy.js
+            test -f /app/server/lib/upstream.js
             test -f /app/assets/sources/hongguo_gw.js
             test -f /app/server/vendor/hongguo-web/server/src/main.js
             # 设备身份与运行期缓存绝不能进镜像（镜像会推到公开 GHCR）
