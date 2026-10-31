@@ -111,6 +111,15 @@ void main() {
       expect(merged, hasLength(2));
     });
 
+    test('标题为空时不因「空标题 + 集数」相同而误并', () {
+      final merged = SourceDedupe.apply([
+        drama(source: 'a', seriesId: 'aaa', title: ''),
+        drama(source: 'b', seriesId: 'bbb', title: ''),
+      ]);
+
+      expect(merged, hasLength(2));
+    });
+
     test('重复项保留首次出现的位置', () {
       final merged = SourceDedupe.apply([
         drama(source: 'a', seriesId: '1', title: '第一'),

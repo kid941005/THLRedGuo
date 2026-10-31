@@ -36,7 +36,11 @@ class SourceDedupe {
   static String keyOf(Drama drama) {
     final raw = drama.cleanSourceId.trim();
     if (raw.length >= 6 && RegExp(r'^\d+$').hasMatch(raw)) return 'id:$raw';
-    return 'title:${_titleKey(drama.title)}|${drama.episodes}';
+    final titleKey = _titleKey(drama.title);
+    // 标题为空（或全是标点）时不能退化成「空标题+集数」：
+    // 那样所有无题条目会撞到同一个键，被误合成一条
+    if (titleKey.isEmpty) return 'id:${drama.id}';
+    return 'title:$titleKey|${drama.episodes}';
   }
 
   static Drama combine(Drama keep, Drama other) {

@@ -39,6 +39,10 @@ class _CatalogSession {
 class CatalogBrowser {
   CatalogBrowser(this.repository);
   final AppRepository repository;
+
+  /// 已浏览条目的本地缓存上限（按源）：超过就丢最早写入的，长会话不会无限涨。
+  static const int _libraryLimit = 3000;
+
   final _menus = <String, List<CatalogCategory>>{};
   final _library = <String, Map<String, Drama>>{};
   final _sessions = <String, _CatalogSession>{};
@@ -58,6 +62,10 @@ class CatalogBrowser {
       if (drama.source == source) {
         library[drama.id] = library[drama.id]?.merge(drama) ?? drama;
       }
+    }
+    // Map 保持插入顺序，keys.first 即最早写入的一条
+    while (library.length > _libraryLimit) {
+      library.remove(library.keys.first);
     }
   }
 
