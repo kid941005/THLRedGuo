@@ -17,6 +17,8 @@ on:
       - 'analysis_options.yaml'
       - 'docker-compose.yml'
       - 'docker-compose.build.yml'
+      - '.dockerignore'
+      - '.githooks/**'
       - '.github/workflows/checks.yml'
   pull_request:
     paths:
@@ -31,6 +33,8 @@ on:
       - 'analysis_options.yaml'
       - 'docker-compose.yml'
       - 'docker-compose.build.yml'
+      - '.dockerignore'
+      - '.githooks/**'
       - '.github/workflows/checks.yml'
   workflow_dispatch:
 
