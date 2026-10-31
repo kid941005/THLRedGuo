@@ -84,6 +84,11 @@ curl http://127.0.0.1:8080/healthz
 `/gw/` 下可用：`rank` `browse` `latest` `search` `episodes` `play` `stream` `video_url` `img`。
 密钥由网关进程启动时自动向内置服务申请，客户端不需要也不应该知道。
 
+### 标签策略
+
+- `v*`（如 `v1.1.1`）：会同时触发仓库已有的 App 打包工作流（macOS runner，耗时且计费）。
+- `gw-*`（如 `gw-v1.2.0`）：**只构建网关镜像**，不触发 App 打包，仅调整网关时推荐用这个前缀。
+
 ## 环境变量
 
 | 变量 | 默认 | 说明 |

@@ -4,7 +4,8 @@ name: Build Gateway Image (GHCR)
 # 触发：推送 v* 标签，或手动运行（可指定镜像标签）。
 on:
   push:
-    tags: ['v*']
+    # v*：随应用版本一起发布；gw-*：只发布网关、不触发 App 打包
+    tags: ['v*', 'gw-*']
   workflow_dispatch:
     inputs:
       tag:
