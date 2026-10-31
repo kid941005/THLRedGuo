@@ -187,7 +187,24 @@ curl -s http://127.0.0.1:8080/sources/hongguo_gw.js | head -5
 
 解密成品会落在 `HONGGUO_STREAM_CACHE`。网关默认每 5 分钟清理一次（TTL 180 分钟 / 上限 2 GB），可用 `CACHE_TTL_MIN`、`CACHE_MAX_MB` 调整；`/healthz` 的 `cache.files` 与 `cache.mb` 能直接看出当前占用。
 
-### 5. `docker build` 失败
+### 5. 校验报 `services.gateway additional properties 'name' not allowed`
+
+`name` 是**项目级键**（顶层、缩进 0），不是服务键。服务里指定容器名要用 `container_name`。
+
+```yaml
+name: thlredguo          # ✅ 顶格：项目名（可选，决定默认卷名前缀）
+services:
+  gateway:
+    container_name: thlredguo-gateway   # ✅ 服务内：容器名
+```
+
+出现这个报错，基本是编辑时把 `name:` 那行多缩进了两个空格，或者手写时写进了 `services.gateway`。
+用编辑器打开对齐一下即可；`grep -n "^\s*name:" docker-compose.yml` 能直接看到它在第几列。
+
+顺带提醒：**默认只监听 `127.0.0.1`**，NAS 上部署给电视用时要么写 `"8080:8080"`，
+要么 `GW_BIND=0.0.0.0`，否则容器正常但电视连不上。
+
+### 6. `docker build` 失败
 
 先确认构建上下文正确（必须在**仓库根目录**执行，因为 Dockerfile 要 COPY 两处路径）：
 

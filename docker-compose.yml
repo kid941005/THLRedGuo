@@ -11,6 +11,8 @@
 #   GW_PORT=8080      宿主机端口
 #   GW_BIND=127.0.0.1 监听地址，默认只允许本机；局域网访问设 0.0.0.0（网关无鉴权）
 
+# 项目名（顶层键，缩进必须为 0）。写成 services.gateway 下的 name 会报
+# "additional properties 'name' not allowed" —— 服务里的容器名是 container_name。
 name: thlredguo
 
 services:
