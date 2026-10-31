@@ -133,16 +133,23 @@ if (!spider || typeof spider.category !== 'function') {
     classIds = classes.map((c) => String(c.type_id));
     console.log(`home   : ${classes.map((c) => `${c.type_id}(${c.type_name})`).join(', ')}`);
   }
-  if (classIds.length && !classIds.includes(String(args.category))) {
+  if (classIds.length && !args.id && !classIds.includes(String(args.category))) {
     console.log(
       `catalog: 跳过 —— 分类 "${args.category}" 不在 home 返回的 ${classIds.join(' / ')} 中`
     );
     return;
   }
 
-  const cat = await spider.category(args.category, args.page, false, {});
-  const list = cat.list || [];
-  console.log(`catalog: tid=${args.category} page=${cat.page} pages=${cat.pagecount} total=${cat.total} items=${list.length}`);
+  let list = [];
+  if (args.id) {
+    console.log(`catalog: 已指定 --id，跳过分类拉取`);
+  } else {
+    const cat = await spider.category(args.category, args.page, false, {});
+    list = cat.list || [];
+    console.log(
+      `catalog: tid=${args.category} page=${cat.page} pages=${cat.pagecount} total=${cat.total} items=${list.length}`
+    );
+  }
 
   const targetId = args.id || (list[0] && list[0].vod_id);
   if (!targetId) {

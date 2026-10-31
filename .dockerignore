@@ -16,6 +16,5 @@ assets/video_enhancement
 **/node_modules
 **/*.log
 server/vendor/hongguo-web/README.md
-server/vendor/hongguo-web/web
 server/vendor/hongguo-web/data
 server/vendor/hongguo-web/download

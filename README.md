@@ -160,6 +160,8 @@ THLRedLook
 ├── macos/                 # macOS 桌面端平台工程与权限配置
 ├── windows/               # Windows 桌面端 Runner 与 CMake 构建系统
 ├── tvos/                  # Apple tvOS 原生独立工程（SwiftUI + AVKit + Focus Engine）
+├── server/                # 可选：自建 Docker 网关（服务端签名/取流）与数据源下发
+├── tools/                 # 数据源冒烟工具（脱离 App 验证 home/category/detail/play）
 └── .github/ci/            # 构建、打包、官方 JS 校验与 TestFlight 工具
 ```
 

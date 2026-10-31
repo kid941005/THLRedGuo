@@ -51,6 +51,8 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
+            # gw-v1.2.0 → v1.2.0，保证镜像标签与应用版本号一致
+            type=match,pattern=^gw-(.*),group=1
             type=ref,event=tag
             type=raw,value=latest
             type=sha,format=short

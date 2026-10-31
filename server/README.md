@@ -154,7 +154,7 @@ curl -s http://127.0.0.1:8080/sources/hongguo_gw.js | head -5
 先确认构建上下文正确（必须在**仓库根目录**执行，因为 Dockerfile 要 COPY 两处路径）：
 
 ```bash
-docker build -f server/Dockerfile -t thlredguo-gateway .
+docker build -f server/Dockerfile -t thlredguo-gateway:dev .
 ```
 
 若报 `COPY failed`，检查 `.dockerignore` 是否把 `server/` 或 `assets/sources/hongguo_gw.js` 排除了。

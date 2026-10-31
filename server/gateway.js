@@ -137,7 +137,14 @@ function startUpstream() {
     console.error('[gateway] 内置服务退出，code=', code);
     upstreamReady = false;
     apiKey = '';
-    setTimeout(startUpstream, 3000);
+    setTimeout(() => {
+      startUpstream();
+      // 重启后必须重新探测就绪并取新密钥，否则健康检查会一直停在 false
+      waitForUpstream(60000).then((ok) => {
+        if (ok) ensureKey(false);
+        else console.error('[gateway] 内置服务重启后仍未就绪');
+      });
+    }, 3000);
   });
   return child;
 }
