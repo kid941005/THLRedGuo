@@ -7,13 +7,22 @@ class HongguoPlaybackProfile {
   static Map<String, dynamic>? _runtime;
   static Future<Map<String, dynamic>?>? _loading;
   static String _summary = '尚未读取';
+  static bool _imported = false;
 
   static bool get supported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
   static int get revision => _revision;
   static String get diagnosticSummary => _summary;
 
+  /// 本机是否已导入可用的播放配置（同步读缓存，供同步逻辑判断）。
+  ///
+  /// 由 [metadata] / [runtimeConfiguration] / [importApk] 的返回刷新；
+  /// 应用刚启动、还没调用过上述方法时为 false —— 保守取值，
+  /// 宁可先按「未导入」处理，也不要误以为官方源可播。
+  static bool get imported => _imported;
+
   static void _recordMetadata(Map<String, dynamic>? value) {
+    _imported = value?['imported'] == true;
     final version = value?['appVersion'];
     _summary =
         value?['imported'] == true &&
@@ -80,6 +89,7 @@ class HongguoPlaybackProfile {
     await _channel.invokeMethod<void>('removeHongguoPlaybackProfile');
     _invalidate();
     _summary = '未导入';
+    _imported = false;
   }
 
   static void _invalidate() {

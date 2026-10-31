@@ -120,6 +120,12 @@ function main() {
   }
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'precommit-'));
+  // 中途抛异常也要清掉临时目录
+  process.on('exit', () => {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch (_) {}
+  });
   const yamlTmp = [];
   let checkedJs = 0;
   let checkedJson = 0;

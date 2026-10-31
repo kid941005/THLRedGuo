@@ -18,3 +18,7 @@ assets/video_enhancement
 server/vendor/hongguo-web/README.md
 server/vendor/hongguo-web/data
 server/vendor/hongguo-web/download
+
+# 运行期生成的设备身份与缓存：绝不能烤进镜像（镜像会推到公开的 GHCR）
+server/vendor/hongguo-web/server/config/apikeys.json
+server/vendor/hongguo-web/server/stream-cache

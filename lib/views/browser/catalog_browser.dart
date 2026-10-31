@@ -45,10 +45,11 @@ class _CatalogSession {
 ///  - 合并时用另一条补齐缺失字段，集数取较大值。
 class _SourceDedupe {
   /// 源优先级：数字越小越优先。
-  /// iOS 端官方源依赖本机导入的 APK 播放配置，未导入时不可播，
-  /// 因此 iOS 让网页版（360p 试看）优先，其余平台让官方源（全集高清）优先。
+  /// 官方 App 接口源在 iOS 上依赖「本机导入的播放配置」，未导入时不可播；
+  /// 只有这一种情况让网页版（360p 试看）优先，其余一律官方源优先（全集高清）。
   static int rank(String source) {
-    final webFirst = HongguoPlaybackProfile.supported;
+    final webFirst =
+        HongguoPlaybackProfile.supported && !HongguoPlaybackProfile.imported;
     if (source == 'hongguo') return webFirst ? 20 : 0;
     if (source == 'hongguo-web') return 10;
     return 30;

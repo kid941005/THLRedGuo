@@ -29,7 +29,12 @@ WORKDIR /app
 COPY server/ /app/server/
 COPY assets/sources/hongguo_gw.js /app/assets/sources/hongguo_gw.js
 
-# 设备身份 / 缓存目录（必须挂卷，重启后 device_id 不能变）
+# 兜底：即使 .dockerignore 被绕过，也不让本地运行期生成的设备身份/密钥进入镜像
+# （镜像会推到公开的 GHCR，这种文件一旦进去等于泄露 device_id 与 api key）
+RUN rm -f /app/server/vendor/hongguo-web/server/config/apikeys.json \
+    && rm -rf /app/server/vendor/hongguo-web/server/stream-cache
+
+# 设备身份备份与解密缓存目录（必须挂卷，容器重建后靠它还原 device_id）
 RUN mkdir -p /app/data /app/server/vendor/hongguo-web/download
 VOLUME ["/app/data"]
 

@@ -37,22 +37,63 @@ const VENDOR_ENTRY = path.join(
   'main.js'
 );
 
+const VENDOR_ROOT = path.resolve(path.dirname(VENDOR_ENTRY), '..', '..');
+
 const startedAt = Date.now();
 let apiKey = '';
 let upstreamReady = false;
+let upstreamChild = null;
+
+// 内置服务把设备身份（device_id）与 api key 写在 server/config/apikeys.json，
+// 该路径固定相对 vendor 根目录，**不受 HONGGUO_DATA_DIR 影响**。
+// 容器重建会丢掉镜像层里的这个文件 → device_id 变化 → 更容易被上游风控，
+// 所以网关拿到密钥后把它同步备份到数据目录，下次启动自动还原。
+const VENDOR_KEY_FILE = path.join(VENDOR_ROOT, 'server', 'config', 'apikeys.json');
+
+// 数据目录：视频缓存与设备身份备份的根，容器内应挂卷
+const DATA_DIR =
+  process.env.HONGGUO_DATA_DIR || path.join(__dirname, 'vendor', 'hongguo-web', 'data');
+const KEY_BACKUP = path.join(DATA_DIR, 'apikeys.json');
 
 // 解密流缓存目录与清理参数
 const CACHE_DIR = (() => {
   if (process.env.HONGGUO_STREAM_CACHE) return process.env.HONGGUO_STREAM_CACHE;
-  const dataDir =
-    process.env.HONGGUO_DATA_DIR ||
-    path.join(__dirname, 'vendor', 'hongguo-web', 'data');
-  return path.join(dataDir, 'stream-cache');
+  return path.join(DATA_DIR, 'stream-cache');
 })();
 const CACHE_TTL_MIN = Number(process.env.CACHE_TTL_MIN || 180);
 const CACHE_MAX_MB = Number(process.env.CACHE_MAX_MB || 2048);
 const CACHE_SWEEP_SEC = Number(process.env.CACHE_SWEEP_SEC || 300);
 let cacheStats = { files: 0, mb: 0 };
+
+/** 启动前还原设备身份：容器重建后镜像内的 apikeys.json 已丢，从卷里恢复 */
+function restoreKeyBackup() {
+  try {
+    if (fs.existsSync(VENDOR_KEY_FILE)) return false;
+    if (!fs.existsSync(KEY_BACKUP)) return false;
+    fs.mkdirSync(path.dirname(VENDOR_KEY_FILE), { recursive: true });
+    fs.copyFileSync(KEY_BACKUP, VENDOR_KEY_FILE);
+    console.log('[gateway] 已从备份恢复设备身份:', KEY_BACKUP);
+    return true;
+  } catch (e) {
+    console.error('[gateway] 恢复设备身份失败:', e.message);
+    return false;
+  }
+}
+
+/** 拿到密钥后把 apikeys.json 备份到数据目录（先写临时文件再改名，避免半截文件） */
+function backupKey() {
+  try {
+    if (!fs.existsSync(VENDOR_KEY_FILE)) return false;
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const tmp = `${KEY_BACKUP}.tmp`;
+    fs.copyFileSync(VENDOR_KEY_FILE, tmp);
+    fs.renameSync(tmp, KEY_BACKUP);
+    return true;
+  } catch (e) {
+    console.error('[gateway] 备份设备身份失败:', e.message);
+    return false;
+  }
+}
 
 /**
  * 解密流缓存清理：内置服务只写不删，长时间运行会把磁盘吃满。
@@ -115,7 +156,7 @@ function startUpstream() {
   const child = spawn(process.execPath, [VENDOR_ENTRY], {
     // 必须以 vendor 根目录为 cwd：内置服务用相对路径 server/config/ 读写配置，
     // 在 server/src 下启动会生成嵌套的 server/src/server/config 副本。
-    cwd: path.resolve(path.dirname(VENDOR_ENTRY), '..', '..'),
+    cwd: VENDOR_ROOT,
     env: {
       ...process.env,
       PORT: String(HK_PORT),
@@ -123,13 +164,12 @@ function startUpstream() {
       // 容器内不弹浏览器；转码默认关闭（取流为纯解密，不需要 ffmpeg）
       HG_OPEN_BROWSER: '0',
       HG_TRANSCODE: process.env.HG_TRANSCODE || '0',
-      // 设备身份与缓存落盘目录，务必挂卷持久化，否则重启后 device_id 变化更易被风控
-      HONGGUO_DATA_DIR:
-        process.env.HONGGUO_DATA_DIR ||
-        path.join(__dirname, 'vendor', 'hongguo-web', 'data'),
+      // 只决定视频解密缓存的落盘位置；设备身份固定在 server/config/apikeys.json
+      HONGGUO_DATA_DIR: DATA_DIR,
     },
     stdio: 'inherit',
   });
+  upstreamChild = child;
   child.on('error', (e) => {
     console.error('[gateway] 内置服务启动失败:', e.message);
   });
@@ -192,6 +232,8 @@ async function ensureKey(force) {
     const { json } = await httpJson(`${UPSTREAM}/api-key`);
     if (json && typeof json.api_key === 'string' && json.api_key) {
       apiKey = json.api_key;
+      // 取到密钥说明 apikeys.json 已生成，立即备份，容器重建后才能还原同一设备身份
+      backupKey();
     }
   } catch (_) {}
   return apiKey;
@@ -303,6 +345,7 @@ function proxy(req, res, subPath) {
 
 // ---------------------------------------------------------------- 启动
 
+restoreKeyBackup();
 startUpstream();
 waitForUpstream(60000).then((ok) => {
   if (!ok) console.error('[gateway] 内置服务在 60s 内未就绪，代理请求将返回 502');
@@ -314,11 +357,13 @@ const server = http.createServer((req, res) => {
   const pathname = url.split('?')[0];
 
   if (pathname === '/healthz') {
-    return sendJson(res, 200, {
+    // 内置服务不可用时返回 503：若一律 200，容器健康检查永远“通过”，故障发现不了
+    return sendJson(res, upstreamReady ? 200 : 503, {
       ok: upstreamReady,
       uptime_s: Math.round((Date.now() - startedAt) / 1000),
       upstream: UPSTREAM,
       has_key: apiKey !== '',
+      device_persisted: fs.existsSync(KEY_BACKUP),
       source: '/sources/hongguo_gw.js',
       cache: { dir: CACHE_DIR, ...cacheStats, ttl_min: CACHE_TTL_MIN, max_mb: CACHE_MAX_MB },
     });
@@ -367,9 +412,16 @@ sweepCache();
 const sweeper = setInterval(sweepCache, Math.max(30, CACHE_SWEEP_SEC) * 1000);
 if (typeof sweeper.unref === 'function') sweeper.unref();
 
+function shutdown() {
+  if (upstreamChild) {
+    try {
+      upstreamChild.kill('SIGTERM');
+    } catch (_) {}
+  }
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000);
+}
+
 for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => {
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 3000);
-  });
+  process.on(sig, shutdown);
 }

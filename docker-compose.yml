@@ -32,7 +32,9 @@ services:
       CACHE_MAX_MB: "${CACHE_MAX_MB:-2048}"
       TZ: "${TZ:-Asia/Shanghai}"
 
-    # 设备身份与解密缓存：删掉这个卷等于换 device_id，更容易被上游风控
+    # 卷内存放：解密缓存 + apikeys.json 备份（设备身份）。
+    # 容器重建时镜像内的 apikeys.json 会丢，网关从这个卷里还原同一个 device_id；
+    # 删掉卷 = 下次重建换新身份，更容易被上游风控。
     volumes:
       - gateway-data:/app/data
 

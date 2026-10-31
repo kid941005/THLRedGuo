@@ -25,6 +25,9 @@ docker compose up -d
 curl http://127.0.0.1:8080/healthz
 ```
 
+> 首次启动要等内置服务就绪（通常 5–10 秒），在此之前 `/healthz` 返回 **503**（`ok:false`），属正常现象。
+> 就绪后返回 200 且 `ok:true`、`has_key:true`、`device_persisted:true`。
+
 固定版本，避免 `latest` 漂移：
 
 ```bash
@@ -103,14 +106,25 @@ curl http://127.0.0.1:8080/healthz
 | `HK_PORT` | `8000` | 内置服务端口（仅容器内） |
 | `PUBLIC_BASE` | 空 | 对外基址覆盖，反向代理场景使用 |
 | `HK_QUALITY` | `best` | 注入脚本的默认清晰度 |
-| `HONGGUO_DATA_DIR` | `/app/data` | 设备身份与缓存根目录，**必须挂卷** |
+| `HONGGUO_DATA_DIR` | `/app/data` | 解密缓存根目录 + 设备身份备份目录，**必须挂卷** |
 | `HONGGUO_STREAM_CACHE` | `/app/data/stream-cache` | 解密成品缓存目录 |
 | `CACHE_TTL_MIN` | `180` | 缓存保留分钟数，`0` 表示不按时间淘汰 |
 | `CACHE_MAX_MB` | `2048` | 缓存总量上限，`0` 表示不限 |
 | `CACHE_SWEEP_SEC` | `300` | 清理扫描间隔（秒） |
 | `HG_TRANSCODE` | `0` | 是否开启转码；取流是纯解密，默认关闭 |
 
-`/healthz` 会回报 `cache` 字段（目录、文件数、占用 MB），可用来确认清理是否生效。
+`/healthz` 会回报 `cache`（目录、文件数、占用 MB）与 `device_persisted`（设备身份备份是否就位）。
+内置服务未就绪时返回 **503**，因此 Docker 健康检查能真实反映故障，而不是永远“通过”。
+
+### 设备身份是怎么持久化的
+
+内置服务把 `device_id`、api key、管理口令写在 `server/config/apikeys.json`（相对 vendor 根目录，
+**不受 `HONGGUO_DATA_DIR` 影响**）。这个位置在镜像层里，容器重建就会丢，于是网关做了两层：
+
+1. 启动前：若镜像内的 `apikeys.json` 缺失而卷里有 `$HONGGUO_DATA_DIR/apikeys.json`，先还原；
+2. 拿到密钥后：把 `apikeys.json` 备份到 `$HONGGUO_DATA_DIR/apikeys.json`（临时文件 + 改名）。
+
+所以 **只要卷还在，重建容器、升级镜像都不会换 `device_id`**。删卷则会换。
 
 ## 排障
 
@@ -129,7 +143,8 @@ docker logs -f thlredguo-gateway
 **这是上游风控，不是网关故障。** 触发条件实测包括：出口 IP 不稳定、机房 IP、device_id 频繁变化、短时间请求过多。
 
 对策按收益排序：
-1. 确认 `/app/data` 已挂卷（device_id 持久化），重启后 `/app/data` 里应有设备身份文件；
+1. 确认 `/app/data` 已挂卷，且 `curl /healthz` 里 `device_persisted` 为 `true`
+   （卷里应有 `/app/data/apikeys.json`，容器重建后网关会自动还原同一个 device_id）；
 2. 换稳定出口（家宽/固定 IP，或给容器配固定代理出口）；
 3. 降低频率（别并发刷详情）；
 4. 若长期不可用，改回设备端源 `hongguo-web`（360P 试看，但不受服务端风控影响）。
@@ -177,5 +192,7 @@ docker build -f server/Dockerfile -t thlredguo-gateway:dev .
 - `server/vendor/hongguo-web/`：MIT，原文见 `server/vendor/hongguo-web/LICENSE`。
   仅引入运行所需部分：`server/src`、`server/config/config.json`（模板）、`package.json`、`LICENSE`、`README.md`；
   已移除上游的 web 前端、`.github` 工作流、截图与打包脚本。逻辑未做修改，升级时整体替换即可。
-- **运行期生成、不入库**：`server/config/apikeys.json`（本地 api key / admin token / device_id）、
-  `data/`（解密缓存与设备状态）。已在 `.gitignore` 中排除，容器内对应 `/app/data` 卷。
+- **运行期生成、不入库**：`server/vendor/hongguo-web/server/config/apikeys.json`（api key / admin token / device_id）
+  与 `server/stream-cache`、`download/`。已同时写进 `.gitignore` 与 `.dockerignore`——
+  镜像要推到公开的 GHCR，这些文件一旦被 COPY 进去就等于泄露设备身份。
+  容器内运行时对应 `/app/data` 卷（`apikeys.json` 备份 + `stream-cache`）。

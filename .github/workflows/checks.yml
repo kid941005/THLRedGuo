@@ -55,7 +55,7 @@ jobs:
           node-version: '20'
 
       - name: Install pyyaml（YAML 校验用）
-        run: python3 -m pip install --quiet pyyaml
+        run: python3 -m pip install --quiet pyyaml || python3 -m pip install --quiet --break-system-packages pyyaml
 
       - name: 全仓静态检查
         run: node tools/precommit_check.cjs --all
@@ -87,3 +87,46 @@ jobs:
 
       - name: flutter analyze
         run: flutter analyze --no-pub
+
+  docker-build:
+    name: 镜像可构建且不含设备身份
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: 构建镜像（不推送）
+        run: docker build -f server/Dockerfile -t thlredguo-gateway:ci .
+
+      - name: 断言镜像内容
+        run: |
+          docker run --rm --entrypoint sh thlredguo-gateway:ci -c '
+            set -e
+            test -f /app/server/gateway.js
+            test -f /app/assets/sources/hongguo_gw.js
+            test -f /app/server/vendor/hongguo-web/server/src/main.js
+            # 设备身份与运行期缓存绝不能进镜像（镜像会推到公开 GHCR）
+            test ! -f /app/server/vendor/hongguo-web/server/config/apikeys.json
+            test ! -d /app/server/vendor/hongguo-web/server/stream-cache
+            echo "镜像内容检查通过"
+          '
+
+      - name: 容器可启动且健康检查转为通过
+        run: |
+          docker run -d --name gw-ci -p 8080:8080 thlredguo-gateway:ci
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/healthz > /tmp/health.json 2>/dev/null; then
+              echo "第 ${i} 次探测通过"
+              ok=1
+              break
+            fi
+            sleep 2
+          done
+          docker logs gw-ci | tail -20
+          docker rm -f gw-ci >/dev/null 2>&1 || true
+          if [ "$ok" != "1" ]; then
+            echo "容器在 60 秒内未就绪"
+            exit 1
+          fi
+          cat /tmp/health.json
