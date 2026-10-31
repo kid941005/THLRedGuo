@@ -9,9 +9,21 @@ class SourceSite {
   final String id;
   final String name;
   final String description;
-  bool get onlineSearch => id == 'hongguo';
-  bool get pagedSearch => id == 'hongguo';
-  bool get searchSuggestions => id == 'hongguo';
+  /// 数据源能力开关：优先读取已导入插件声明的 features；
+  /// 插件未载入或未声明时，回退到内置官方源的既有行为。
+  bool _supports(String feature) {
+    final service = JsSourceService.current;
+    if (service != null) {
+      for (final meta in service.sources) {
+        if (meta.id == id) return meta.features.contains(feature);
+      }
+    }
+    return id == 'hongguo';
+  }
+
+  bool get onlineSearch => _supports('search');
+  bool get pagedSearch => _supports('search');
+  bool get searchSuggestions => _supports('suggestions');
   String get groupId => id;
   String get groupName => name;
   String get entryName => name;
@@ -447,6 +459,7 @@ class PlaybackPlan {
     this.routeCount = 1,
     this.local = false,
     this.onlineCache = false,
+    this.servedBy = '',
   });
   final String url;
   final Map<String, String> headers;
@@ -462,6 +475,9 @@ class PlaybackPlan {
   final int routeCount;
   final bool local;
   final bool onlineCache;
+
+  /// 实际提供本集流的源 id。主源失败自动回退到备份源时会与请求源不同。
+  final String servedBy;
   bool get offline => local && !onlineCache;
   bool get hasAlternative => session.isNotEmpty && routeIndex + 1 < routeCount;
   factory PlaybackPlan.fromJson(Map<String, dynamic> json) => PlaybackPlan(
@@ -484,6 +500,7 @@ class PlaybackPlan {
     routeCount: intValue(json['routeCount']) > 0
         ? intValue(json['routeCount'])
         : 1,
+    servedBy: json['servedBy'] as String? ?? '',
   );
 }
 

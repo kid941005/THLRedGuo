@@ -61,6 +61,7 @@ class IosEncryptedStream {
         expiresAt: plan.expiresAt,
         routeIndex: plan.routeIndex,
         routeCount: plan.routeCount,
+        servedBy: plan.servedBy,
       );
     } catch (_) {
       await close();

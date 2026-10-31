@@ -57,6 +57,13 @@ const List<PresetJsSource> kPresetJsSources = [
     description: '官方首发短剧源，包含海量都市爽文、战神回归、现代甜宠短剧',
     assetPath: 'assets/sources/hongguo.js',
   ),
+  PresetJsSource(
+    id: 'hongguo-web',
+    fileName: 'hongguo_web.js',
+    name: '红果短剧·网页版',
+    description: '官方网页端目录与免费试看，无需导入 APK，可与官方源并行聚合',
+    assetPath: 'assets/sources/hongguo_web.js',
+  ),
 ];
 
 /// 批量一键导入预设插件（仅供当前测试包使用）

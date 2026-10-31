@@ -183,6 +183,7 @@ class EncryptedPlayback {
         danmakuId: plan.danmakuId,
         expiresAt: 0,
         prefetchedBytes: await File(output).length(),
+        servedBy: plan.servedBy,
       );
     } finally {
       try {

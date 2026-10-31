@@ -137,6 +137,9 @@ class _PlayerScreenState extends State<PlayerScreen>
   Orientation? _lastOrientation;
   bool _closed = false;
   bool _acceptErrors = false;
+
+  /// 已提示过自动切源的源 id，避免每集重复弹提示
+  String _announcedServedBy = '';
   bool _foreground = true;
   bool _playIntent = true;
   bool _lifecyclePaused = false;
@@ -1594,6 +1597,7 @@ class _PlayerScreenState extends State<PlayerScreen>
           setState(() {
             _loading = false;
           });
+          _announceServedBy(plan);
           _danmaku.setPlan(plan);
           _syncDanmaku();
           _acknowledgeHandoff();
@@ -1663,6 +1667,27 @@ class _PlayerScreenState extends State<PlayerScreen>
         await widget.repository.release(retained!.session);
       }
     }
+  }
+
+  /// 主源不可用、已自动切到备份源时提示一次，避免用户误以为还是原清晰度
+  void _announceServedBy(PlaybackPlan plan) {
+    final served = plan.servedBy;
+    if (served.isEmpty || served == _announcedServedBy) return;
+    final requested = widget.detail.drama.source;
+    if (requested.isEmpty || served == requested) return;
+    _announcedServedBy = served;
+    if (!mounted) return;
+    final isWeb = served == 'hongguo-web';
+    final label = isWeb ? '网页版 360P 试看' : '官方源';
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('本集已切换至$label'),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ),
+      );
   }
 
   Future<void> _switchOnline() async {

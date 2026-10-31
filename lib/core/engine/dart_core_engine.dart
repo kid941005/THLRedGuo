@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:THLRedLook/core/js/catpaw_js_runtime.dart';
 import 'package:THLRedLook/core/js/js_source_models.dart';
+import 'package:THLRedLook/core/js/source_companions.dart';
 import 'package:THLRedLook/models/catalog/models.dart';
 import 'package:THLRedLook/utils/media/cover_decoder.dart';
 
@@ -1051,31 +1052,7 @@ class DartCoreEngine {
           }
         }
         if (playRes.url.isNotEmpty) {
-          final streamUrl = playRes.url;
-          final mimeType = streamUrl.contains('.m3u8')
-              ? 'application/x-mpegURL'
-              : 'video/mp4';
-          final detected = RegExp(
-            r'/(2160|1080|720|480|360)p[./]',
-          ).firstMatch(streamUrl);
-          final effectiveQuality = playRes.quality > 0
-              ? playRes.quality
-              : int.tryParse(detected?.group(1) ?? '') ?? 0;
-          return {
-            'url': streamUrl,
-            'session': 'sess_${DateTime.now().microsecondsSinceEpoch}_$source',
-            'headers': playRes.header,
-            'decryptionKey': playRes.decryptionKey,
-            'mediaBytes': playRes.mediaBytes,
-            'expiresAt': playRes.expiresAt,
-            'quality': effectiveQuality,
-            'qualities': playRes.qualities.isNotEmpty
-                ? playRes.qualities
-                : [if (effectiveQuality > 0) effectiveQuality],
-            'local': false,
-            'mimeType': mimeType,
-            'danmakuId': playRes.danmakuId,
-          };
+          return _playbackPlan(source, playRes);
         }
         sourceFailure = CatPawSourceFailure.playback(playRes.errorCode);
       } catch (error) {
@@ -1092,32 +1069,7 @@ class DartCoreEngine {
               if (newTarget != null && newTarget.isNotEmpty) {
                 final retryRes = await rt.play('flag', newTarget, flags: flags);
                 if (retryRes.url.isNotEmpty) {
-                  final streamUrl = retryRes.url;
-                  final mimeType = streamUrl.contains('.m3u8')
-                      ? 'application/x-mpegURL'
-                      : 'video/mp4';
-                  final detected = RegExp(
-                    r'/(2160|1080|720|480|360)p[./]',
-                  ).firstMatch(streamUrl);
-                  final effectiveQuality = retryRes.quality > 0
-                      ? retryRes.quality
-                      : int.tryParse(detected?.group(1) ?? '') ?? 0;
-                  return {
-                    'url': streamUrl,
-                    'session':
-                        'sess_${DateTime.now().microsecondsSinceEpoch}_$source',
-                    'headers': retryRes.header,
-                    'decryptionKey': retryRes.decryptionKey,
-                    'mediaBytes': retryRes.mediaBytes,
-                    'expiresAt': retryRes.expiresAt,
-                    'quality': effectiveQuality,
-                    'qualities': retryRes.qualities.isNotEmpty
-                        ? retryRes.qualities
-                        : [if (effectiveQuality > 0) effectiveQuality],
-                    'local': false,
-                    'mimeType': mimeType,
-                    'danmakuId': retryRes.danmakuId,
-                  };
+                  return _playbackPlan(source, retryRes);
                 }
               }
             }
@@ -1162,12 +1114,120 @@ class DartCoreEngine {
       };
     }
 
+    // 主源不可用时，用互为备份的官方源再试同一集
+    // （典型场景：iOS 未导入 APK → 官方接口源报 LOCAL_PROFILE_REQUIRED，回退网页版）
+    final companionPlan = await _resolveCompanionPlayback(
+      source: source,
+      sourceId: sourceId,
+      episodeIndex: episodeIndex,
+      quality: (input['quality'] as num?)?.toInt() ?? 0,
+      avoidUrl: input['avoidUrl'] is String ? input['avoidUrl'] as String : null,
+    );
+    if (companionPlan != null) return companionPlan;
+
     if (sourceFailure != null) throw sourceFailure;
     throw CatPawSourceFailure.playback('NO_STREAM');
   }
 
   Map<String, dynamic> _fallbackPlayback(Map<String, dynamic> input) {
     throw StateError('无备用播放流');
+  }
+
+  /// 备份源的分集缓存（仅缓存成功结果，最多 12 部剧，避免切集时反复拉详情）
+  final Map<String, List<Map<String, dynamic>>> _companionChapters = {};
+
+  /// 由取流结果构造播放计划
+  Map<String, dynamic> _playbackPlan(String source, CatPawPlayResult res) {
+    final streamUrl = res.url;
+    final mimeType = streamUrl.contains('.m3u8')
+        ? 'application/x-mpegURL'
+        : 'video/mp4';
+    final detected = RegExp(
+      r'/(2160|1080|720|480|360)p[./]',
+    ).firstMatch(streamUrl);
+    final effectiveQuality = res.quality > 0
+        ? res.quality
+        : int.tryParse(detected?.group(1) ?? '') ?? 0;
+    return {
+      'url': streamUrl,
+      'session': 'sess_${DateTime.now().microsecondsSinceEpoch}_$source',
+      'headers': res.header,
+      'decryptionKey': res.decryptionKey,
+      'mediaBytes': res.mediaBytes,
+      'expiresAt': res.expiresAt,
+      'quality': effectiveQuality,
+      'qualities': res.qualities.isNotEmpty
+          ? res.qualities
+          : [if (effectiveQuality > 0) effectiveQuality],
+      'local': false,
+      'mimeType': mimeType,
+      'danmakuId': res.danmakuId,
+      'servedBy': source,
+    };
+  }
+
+  /// 主源取流失败后，尝试用备份源播放同一集。
+  /// 失败一律返回 null，由调用方抛出原始错误，避免掩盖真实原因。
+  Future<Map<String, dynamic>?> _resolveCompanionPlayback({
+    required String source,
+    required String sourceId,
+    required int episodeIndex,
+    required int quality,
+    String? avoidUrl,
+  }) async {
+    final companion = companionSourceOf(source);
+    if (companion == null || sourceId.isEmpty || episodeIndex <= 0) return null;
+    if (!_sourceScripts.containsKey(companion)) return null;
+
+    final cacheKey = '$companion:$sourceId';
+    var chapters = _companionChapters[cacheKey];
+    if (chapters == null || chapters.length < episodeIndex) {
+      try {
+        final rt = await _getSpiderRuntime(
+          companion,
+          scope: 'playback',
+          detailId: sourceId,
+        );
+        if (rt == null) return null;
+        final detailRes = await rt.detail(sourceId);
+        final parsed = _parseChaptersFromVodPlayUrl(
+          detailRes.vod['vod_play_url']?.toString() ?? '',
+        );
+        if (parsed.isEmpty) return null;
+        if (_companionChapters.length >= 12) {
+          _companionChapters.remove(_companionChapters.keys.first);
+        }
+        _companionChapters[cacheKey] = parsed;
+        chapters = parsed;
+      } catch (_) {
+        return null;
+      }
+    }
+    if (chapters.length < episodeIndex) return null;
+
+    final target = chapters[episodeIndex - 1]['raw']?.toString() ?? '';
+    if (target.isEmpty) return null;
+
+    try {
+      final rt = await _getSpiderRuntime(
+        companion,
+        scope: 'playback',
+        detailId: sourceId,
+      );
+      if (rt == null) return null;
+      final playRes = await rt.play(
+        'flag',
+        target,
+        flags: [
+          {'quality': quality, 'seriesId': sourceId},
+          if (avoidUrl != null && avoidUrl.isNotEmpty) {'avoidUrl': avoidUrl},
+        ],
+      );
+      if (playRes.url.isEmpty) return null;
+      return _playbackPlan(companion, playRes);
+    } catch (_) {
+      return null;
+    }
   }
 
   Map<String, dynamic> _enqueueDownloads(Map<String, dynamic> input) {
