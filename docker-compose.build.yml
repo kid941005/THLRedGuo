@@ -1,0 +1,13 @@
+# 本地构建覆盖文件 —— 与 docker-compose.yml 叠加使用
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# 作用：给 gateway 服务补上 build，并把镜像打成本地标签 `:dev`，
+# 避免覆盖 ghcr 上的正式标签（否则后续 pull 会被本地镜像遮蔽）。
+
+services:
+  gateway:
+    image: ghcr.io/kid941005/thlredguo-gateway:dev
+    build:
+      context: .
+      dockerfile: server/Dockerfile

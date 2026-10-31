@@ -1,27 +1,54 @@
+# 短剧数据网关 —— 部署编排（只拉镜像，不构建）
+#
+#   docker compose pull
+#   docker compose up -d
+#
+# 想用当前源码构建，叠加覆盖文件（不改本文件）：
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# 常用变量（也可写进同目录 .env）：
+#   GW_TAG=v1.1.1     固定镜像版本，默认 latest
+#   GW_PORT=8080      宿主机端口
+
+name: thlredguo
+
 services:
-  hongguo-gateway:
-    # 默认拉取 CI 构建好的镜像；GW_TAG 可指定版本，如 GW_TAG=v1.1.1
+  gateway:
     image: ghcr.io/kid941005/thlredguo-gateway:${GW_TAG:-latest}
-    # 本地改代码或无法拉镜像时：docker compose up -d --build
-    build:
-      context: .
-      dockerfile: server/Dockerfile
     container_name: thlredguo-gateway
+    # 让内置子进程被正确回收、SIGTERM 能转发
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 15s
+
     ports:
-      - "8080:8080"
+      - "${GW_PORT:-8080}:8080"
+
     environment:
       PORT: "8080"
       HK_PORT: "8000"
-      # 默认清晰度：best / 1080p / 720p / 540p / 480p / 360p
-      HK_QUALITY: "best"
-      # 解密流缓存：超过 TTL 或总量上限即淘汰（网关每 5 分钟扫一次）
-      CACHE_TTL_MIN: "180"
-      CACHE_MAX_MB: "2048"
-      TZ: "Asia/Shanghai"
-    restart: unless-stopped
-    # 设备身份与缓存落盘：务必持久化，重启后 device_id 变化会显著提高被风控概率
+      HK_QUALITY: "${HK_QUALITY:-best}"
+      CACHE_TTL_MIN: "${CACHE_TTL_MIN:-180}"
+      CACHE_MAX_MB: "${CACHE_MAX_MB:-2048}"
+      TZ: "${TZ:-Asia/Shanghai}"
+
+    # 设备身份与解密缓存：删掉这个卷等于换 device_id，更容易被上游风控
     volumes:
-      - hongguo-data:/app/data
+      - gateway-data:/app/data
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
-  hongguo-data:
+  gateway-data:
+    name: thlredguo-gateway-data

@@ -16,7 +16,8 @@ assets/sources/hongguo_gw.js # 下发给客户端的数据源脚本（占位符�
 
 ## 起服务
 
-镜像由 GitHub Actions 构建并推送到 GHCR（`linux/amd64` + `linux/arm64`），默认直接拉取：
+镜像由 GitHub Actions 构建并推送到 GHCR（`linux/amd64` + `linux/arm64`）。
+`docker-compose.yml` **只引用镜像，不含 build**，所以拉取与构建互不干扰。
 
 ```bash
 docker compose pull
@@ -24,17 +25,22 @@ docker compose up -d
 curl http://127.0.0.1:8080/healthz
 ```
 
-想固定版本、避免 `latest` 漂移：
+固定版本，避免 `latest` 漂移：
 
 ```bash
 GW_TAG=v1.1.1 docker compose up -d
 ```
 
-本地改了代码、或目标机拉不到镜像时，改为现场构建：
+**从源码构建**时叠加覆盖文件（base 文件保持干净）：
 
 ```bash
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
+
+覆盖文件把镜像打成 `:dev` 标签，不会覆盖 ghcr 上的 `:latest` / `:v1.1.1`，
+避免之后 `pull` 被本地产物遮蔽（这是把 `build` 与 `image` 写在同一文件里的常见坑）。
+
+端口冲突时改宿主机端口：`GW_PORT=18080 docker compose up -d`。
 
 > 包可见性继承仓库：当前仓库公开，镜像同样**公开**，无需登录即可拉取。
 > 若日后仓库转为私有，需先 `docker login ghcr.io -u <用户名> -p <PAT>`。
