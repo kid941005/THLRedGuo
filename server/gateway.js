@@ -340,7 +340,13 @@ function proxy(req, res, subPath) {
   res.on('close', () => {
     if (!res.writableEnded) upstreamReq.destroy();
   });
-  req.pipe(upstreamReq);
+  // GET / HEAD 没有请求体：直接 end。重试时 req 已经读完，
+  // 再对它 pipe 属于未定义行为，可能让上游请求一直不结束，只能等 120s 超时。
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    upstreamReq.end();
+  } else {
+    req.pipe(upstreamReq);
+  }
 }
 
 // ---------------------------------------------------------------- 启动
