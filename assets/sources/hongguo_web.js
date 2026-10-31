@@ -139,15 +139,26 @@ async function fetchText(url, referer) {
 /**
  * 探测片源是否可取（官网按集授权，未公开的集会 404）。
  * 返回 HTTP 状态码，网络异常返回 0 —— 便于上层区分「没有片源」和「网络失败」。
+ *
+ * 先用 HEAD（最省流量）；部分 CDN 对 HEAD 返回 403/405，此时退化为 Range GET 再判一次，
+ * 否则会把「片源存在但拒绝 HEAD」误报成没有片源。
  */
 async function probeMedia(url) {
+  const headers = { "User-Agent": USER_AGENT, Referer: BASE_URL + "/" };
   try {
-    const resp = await fetch(url, {
-      method: "HEAD",
-      headers: { "User-Agent": USER_AGENT, Referer: BASE_URL + "/" },
+    const head = await fetch(url, { method: "HEAD", headers: headers, timeoutMs: 8000 });
+    const status = head && typeof head.status === "number" ? head.status : 0;
+    if (status === 200) return status;
+    if (status !== 403 && status !== 405) return status;
+  } catch (e) {
+    return 0;
+  }
+  try {
+    const ranged = await fetch(url, {
+      headers: Object.assign({ Range: "bytes=0-0" }, headers),
       timeoutMs: 8000
     });
-    return resp && typeof resp.status === "number" ? resp.status : 0;
+    return ranged && typeof ranged.status === "number" ? ranged.status : 0;
   } catch (e) {
     return 0;
   }
