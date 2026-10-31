@@ -49,7 +49,6 @@ fastlane/
 tvos/THLRedLookTests
 tvos/THLRedLookUITests
 scripts/
-test/
 test_driver/
 integration_test/
 PRD/

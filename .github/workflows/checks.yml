@@ -92,6 +92,9 @@ jobs:
       - name: flutter analyze
         run: flutter analyze --no-pub
 
+      - name: flutter test
+        run: flutter test
+
   docker-build:
     name: 镜像可构建且不含设备身份
     runs-on: ubuntu-latest

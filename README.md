@@ -206,6 +206,7 @@ Dart 静态分析太慢，钩子只提示、不执行。
 node tools/precommit_check.cjs --all
 node tools/source_meta_check.cjs   # 数据源可加载，且 home/category/detail/play 齐全
 flutter analyze
+flutter test                       # 纯逻辑单测（跨源去重、互备表）
 ```
 
 `.github/workflows/checks.yml` 在 push 与 PR 时执行同样的检查，Dart 分析单独一个 job。
