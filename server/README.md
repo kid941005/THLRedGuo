@@ -36,9 +36,9 @@ GW_TAG=v1.1.1 docker compose up -d
 docker compose up -d --build
 ```
 
-> 包默认是 **Private**，拉取前需登录：
-> `echo $GITHUB_TOKEN | docker login ghcr.io -u <你的GitHub用户名> --password-stdin`
-> 想改成公开（无需登录即可拉）可在 GitHub 包设置里改 visibility，属于公开动作，自行决定。
+> 包可见性继承仓库：当前仓库公开，镜像同样**公开**，无需登录即可拉取。
+> 若日后仓库转为私有，需先 `docker login ghcr.io -u <用户名> -p <PAT>`。
+> 已验证镜像包含 `linux/amd64` 与 `linux/arm64` 两个架构。
 
 预期返回：
 
