@@ -1,0 +1,40 @@
+#!/bin/sh
+#
+# 提交前静态检查。启用方式（仓库内执行一次）：
+#   git config core.hooksPath .githooks
+# 或直接运行：bash tools/install-hooks.sh
+#
+# 只做秒级、无网络的检查（语法 / 配置 / 密钥）。Dart 静态分析太慢，
+# 放到 CI 与本地手动执行，这里只提示。
+#
+# 临时跳过（不推荐）：git commit --no-verify
+
+set -e
+
+ROOT=$(git rev-parse --show-toplevel)
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: 未找到 node，跳过静态检查"
+  exit 0
+fi
+
+if ! node "$ROOT/tools/precommit_check.cjs" --staged; then
+  echo ""
+  echo "pre-commit: 检查未通过，提交已中止。"
+  echo "  修复后重新 git add；确需跳过用 git commit --no-verify。"
+  exit 1
+fi
+
+# 改了数据源：顺带确认契约没被破坏（加载 + 四个方法齐全）
+if git diff --cached --name-only | grep -qE '^assets/sources/.*\.js$'; then
+  if ! node "$ROOT/tools/source_meta_check.cjs"; then
+    echo "pre-commit: 数据源契约检查未通过，提交已中止。"
+    exit 1
+  fi
+fi
+
+if git diff --cached --name-only | grep -qE '\.dart$'; then
+  echo "pre-commit: 检测到 Dart 改动，建议提交前运行 flutter analyze"
+fi
+
+exit 0

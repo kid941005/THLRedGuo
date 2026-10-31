@@ -188,6 +188,29 @@ flutter pub get
 flutter run
 ```
 
+### 提交前自检
+
+钩子与 CI 共用同一套规则（`tools/precommit_check.cjs`，零第三方依赖）。克隆仓库后启用一次：
+
+```bash
+bash tools/install-hooks.sh      # 等价于 git config core.hooksPath .githooks
+```
+
+钩子只做秒级检查：合并冲突标记、敏感文件名（`apikeys.json` / `.env` / 私钥）、密钥字符串、
+JS 语法、JSON 与 YAML 解析、超大文件；改动 `assets/sources/*.js` 时额外跑数据源契约检查。
+Dart 静态分析太慢，钩子只提示、不执行。
+
+手动跑全仓（与 CI 一致）：
+
+```bash
+node tools/precommit_check.cjs --all
+node tools/source_meta_check.cjs   # 数据源可加载，且 home/category/detail/play 齐全
+flutter analyze
+```
+
+`.github/workflows/checks.yml` 在 push 与 PR 时执行同样的检查，Dart 分析单独一个 job。
+CI 与本地共用规则的好处是：本地过了、CI 不会因为另一套规则再挂一次。
+
 ### 构建与发布
 
 仓库保留的最小工具链位于 `.github/ci/`，CI 和本地打包使用相同入口：
