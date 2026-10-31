@@ -1,0 +1,21 @@
+# 构建上下文只需要 server/ 与一个数据源脚本，其余全部排除
+.git
+.github
+android
+ios
+macos
+windows
+tvos
+packages
+lib
+test
+integration_test
+assets/branding
+assets/screenshots
+assets/video_enhancement
+**/node_modules
+**/*.log
+server/vendor/hongguo-web/README.md
+server/vendor/hongguo-web/web
+server/vendor/hongguo-web/data
+server/vendor/hongguo-web/download

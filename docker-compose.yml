@@ -1,0 +1,25 @@
+services:
+  hongguo-gateway:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: thlredguo-gateway:latest
+    container_name: thlredguo-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      HK_PORT: "8000"
+      # 默认清晰度：best / 1080p / 720p / 540p / 480p / 360p
+      HK_QUALITY: "best"
+      # 解密流缓存：超过 TTL 或总量上限即淘汰（网关每 5 分钟扫一次）
+      CACHE_TTL_MIN: "180"
+      CACHE_MAX_MB: "2048"
+      TZ: "Asia/Shanghai"
+    restart: unless-stopped
+    # 设备身份与缓存落盘：务必持久化，重启后 device_id 变化会显著提高被风控概率
+    volumes:
+      - hongguo-data:/app/data
+
+volumes:
+  hongguo-data:

@@ -1,0 +1,17 @@
+{
+  "name": "hongguo-web",
+  "version": "1.1.9",
+  "description": "红果短剧 · 网页版（Node.js 后端 + 浏览器前端，零第三方依赖）",
+  "main": "server/src/main.js",
+  "scripts": {
+    "start": "node server/src/main.js",
+    "selftest": "node server/src/main.js --selftest",
+    "version": "node server/src/main.js --version"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "license": "MIT",
+  "private": true
+}

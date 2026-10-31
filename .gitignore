@@ -54,3 +54,10 @@ test_driver/
 integration_test/
 PRD/
 AGENTS.md
+
+# 网关运行时数据（设备身份、解密缓存、下载）
+server/vendor/hongguo-web/data/
+server/vendor/hongguo-web/download/
+# 内置服务运行期生成的密钥与设备身份（绝不入库）
+server/vendor/hongguo-web/server/config/apikeys.json
+server/vendor/hongguo-web/server/src/server/config/
