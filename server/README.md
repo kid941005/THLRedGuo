@@ -48,13 +48,13 @@ gateway 同时通过 lib/application.js 提供账号、个人数据、下载和�
 | CACHE_TTL_MIN | 180 | 时间淘汰，单位分钟 |
 | CACHE_MAX_MB | 2048 | 容量淘汰，单位 MB |
 | CACHE_SWEEP_SEC | 300 | 清扫间隔，单位秒 |
-| HONGGUO_CACHE_MAX_FILES | 0 | 可选文件数上限；Compose 用 CACHE_MAX_FILES 配置 |
+| HONGGUO_CACHE_MAX_FILES | 0 | 可选文件数上限，直接在 Compose 中配置 |
 | MEDIA_CONCURRENCY | 2 | 处理并发，范围 1～8，最多排队 64 个请求 |
 | HG_TRANSCODE | 0 | 取流默认不转码 |
 | PLAYBACK_IDENTITY_TTL_HOURS | 720 | 播放身份持久化有效期 |
 | TZ | Asia/Shanghai | 时区 |
 
-Compose 透传根目录 .env.example 中列出的设置。镜像包含 ffmpeg，HG_TRANSCODE=1 可以启用 H.264/AAC 转码；转码后使用独立缓存。
+部署环境变量直接写在 `docker-compose.yml` 的 `environment` 中，不使用 `.env` 或变量插值。修改后执行 `docker compose up -d` 重建容器。镜像包含 ffmpeg，`HG_TRANSCODE: "1"` 可以启用 H.264/AAC 转码；转码后使用独立缓存。
 
 内部密钥和目录身份通过 HONGGUO_KEY_FILE 直接原子写入 /app/data/apikeys.json；播放身份单独写入 /app/data/playback-device.json。旧版卷中的 apikeys.json 可直接复用；旧镜像层里的身份文件只用于一次迁移。日志不输出完整密钥和管理口令。
 

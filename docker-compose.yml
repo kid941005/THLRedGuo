@@ -6,10 +6,8 @@
 # 想用当前源码构建，叠加覆盖文件（不改本文件）：
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 #
-# 常用变量（也可写进同目录 .env）：
-#   GW_TAG=v1.1.1     固定镜像版本，默认 latest
-#   GW_PORT=8080      宿主机端口
-#   GW_BIND=127.0.0.1 监听地址，默认只允许本机；局域网访问设 0.0.0.0
+# 所有部署配置直接在本文件修改，不需要 .env。
+# 升级版本修改 image 标签；局域网访问将 ports 改为 "0.0.0.0:8080:8080"。
 
 # 项目名（顶层键，缩进必须为 0）。写成 services.gateway 下的 name 会报
 # "additional properties 'name' not allowed" —— 服务里的容器名是 container_name。
@@ -17,7 +15,7 @@ name: thlredguo
 
 services:
   gateway:
-    image: ghcr.io/kid941005/thlredguo-gateway:${GW_TAG:-latest}
+    image: ghcr.io/kid941005/thlredguo-gateway:v1.4.0
     container_name: thlredguo-gateway
     # 让内置子进程被正确回收、SIGTERM 能转发
     init: true
@@ -25,26 +23,34 @@ services:
     stop_grace_period: 15s
 
     # 所有剧库、媒体、下载和个人数据接口要求登录。
-    # 局域网访问显式设置 GW_BIND=0.0.0.0；公网访问放在 HTTPS 反向代理后。
+    # 局域网访问将下一行的 127.0.0.1 改为 0.0.0.0；中间的端口为宿主机端口。
+    # 公网访问放在 HTTPS 反向代理后。
     ports:
-      - "${GW_BIND:-127.0.0.1}:${GW_PORT:-8080}:8080"
+      - "127.0.0.1:8080:8080"
 
     environment:
       PORT: "8080"
       HK_PORT: "8000"
-      CACHE_TTL_MIN: "${CACHE_TTL_MIN:-180}"
-      CACHE_MAX_MB: "${CACHE_MAX_MB:-2048}"
-      CACHE_SWEEP_SEC: "${CACHE_SWEEP_SEC:-300}"
-      HONGGUO_CACHE_MAX_FILES: "${CACHE_MAX_FILES:-0}"
-      MEDIA_CONCURRENCY: "${MEDIA_CONCURRENCY:-2}"
-      HG_TRANSCODE: "${HG_TRANSCODE:-0}"
-      PLAYBACK_IDENTITY_TTL_HOURS: "${PLAYBACK_IDENTITY_TTL_HOURS:-720}"
-      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-}"
-      COOKIE_SECURE: "${COOKIE_SECURE:-0}"
-      SETUP_TOKEN: "${SETUP_TOKEN:-}"
-      DOWNLOAD_MAX_MB: "${DOWNLOAD_MAX_MB:-10240}"
-      DOWNLOAD_CONCURRENCY: "${DOWNLOAD_CONCURRENCY:-2}"
-      TZ: "${TZ:-Asia/Shanghai}"
+      HONGGUO_DATA_DIR: "/app/data"
+      HONGGUO_STREAM_CACHE: "/app/data/stream-cache"
+      # 播放缓存：保留 180 分钟，上限 2048 MB，每 300 秒清理；文件数 0 表示不限。
+      CACHE_TTL_MIN: "180"
+      CACHE_MAX_MB: "2048"
+      CACHE_SWEEP_SEC: "300"
+      HONGGUO_CACHE_MAX_FILES: "0"
+      MEDIA_CONCURRENCY: "2"
+      # 浏览器不支持 HEVC 时设为 "1"，转码为 H.264/AAC，会增加 CPU 开销。
+      HG_TRANSCODE: "0"
+      PLAYBACK_IDENTITY_TTL_HOURS: "720"
+      # HTTPS 反代时填写外部来源（例如 https://drama.example.com），COOKIE_SECURE 设为 "1"。
+      # 局域网 HTTP 保持下面两个默认值。
+      PUBLIC_ORIGIN: ""
+      COOKIE_SECURE: "0"
+      # 留空时自动生成 /app/data/setup-token；仅首次创建管理员时使用。
+      SETUP_TOKEN: ""
+      DOWNLOAD_MAX_MB: "10240"
+      DOWNLOAD_CONCURRENCY: "2"
+      TZ: "Asia/Shanghai"
 
     # 卷内存放：SQLite 账号/会话/个人数据、下载成品、媒体缓存和设备身份。
     # 两类设备身份均原子写入卷，重建容器后复用；删卷会重置身份与缓存。

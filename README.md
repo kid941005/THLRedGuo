@@ -32,15 +32,16 @@ docker compose logs --tail=100 gateway
 curl -fsS http://127.0.0.1:8080/healthz
 ```
 
-默认端口只向宿主机开放。NAS 或局域网中的其他设备访问时，先复制配置：
+所有部署配置直接写在 [docker-compose.yml](docker-compose.yml)，不需要 `.env` 文件。默认端口只向宿主机开放；NAS 或局域网中的其他设备访问时，直接修改其中的端口映射：
 
-```bash
-cp .env.example .env
+```yaml
+ports:
+  - "0.0.0.0:8080:8080"
 ```
 
-将 .env 中的 GW_BIND 改为 0.0.0.0，按需修改 GW_PORT，再执行 docker compose up -d。随后打开 http://服务器局域网IP:端口/。
+映射格式为“宿主机监听地址:宿主机端口:容器端口”。端口冲突时只修改中间的宿主机端口，例如 `0.0.0.0:18080:8080`，保持容器端口为 8080。保存后执行 `docker compose up -d`，随后打开 http://服务器局域网IP:端口/。
 
-剧库、媒体、个人数据与下载接口均要求登录，普通用户只能查看自己的数据。公网使用 HTTPS 反向代理，将 /、/api/*、/gw/* 转发到同一来源的根路径；设置 PUBLIC_ORIGIN=https://你的域名 和 COOKIE_SECURE=1。局域网 HTTP 使用默认 COOKIE_SECURE=0。
+剧库、媒体、个人数据与下载接口均要求登录，普通用户只能查看自己的数据。公网使用 HTTPS 反向代理，将 /、/api/*、/gw/* 转发到同一来源的根路径；在 Compose 的 `environment` 中设置 `PUBLIC_ORIGIN: "https://你的域名"` 和 `COOKIE_SECURE: "1"`。局域网 HTTP 保持 `PUBLIC_ORIGIN: ""`、`COOKIE_SECURE: "0"`。
 
 ## 首次创建管理员
 
@@ -50,7 +51,7 @@ cp .env.example .env
 docker compose exec gateway cat /app/data/setup-token
 ```
 
-打开网页，填写用户名、至少十位密码和初始化口令，创建管理员后自动登录。口令文件随即删除，后续账号由“管理后台”创建，不开放游客注册。也可以在首次启动前通过 .env 的 SETUP_TOKEN 指定自己的初始化口令；它不作为登录密码，也不会覆盖现有管理员。
+打开网页，填写用户名、至少十位密码和初始化口令，创建管理员后自动登录。口令文件随即删除，后续账号由“管理后台”创建，不开放游客注册。也可以在首次启动前直接填写 Compose 中的 `SETUP_TOKEN` 指定初始化口令；留空则自动生成。它不作为登录密码，也不会覆盖现有管理员。
 
 Cookie 会话默认有效七天。修改密码、管理员重置密码或停用账号后，已有会话失效。账号密码使用带随机盐的 scrypt 散列保存；不要删除数据卷来尝试重置一个账号，否则所有用户和下载也会丢失。
 
@@ -65,6 +66,8 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 覆盖文件使用 :dev 镜像标签。普通 docker compose up -d 使用 GHCR 已发布镜像，不包含尚未发布的本地修改。
 
 ## 更新与持久化
+
+直接修改 Compose 的 `image` 标签选择版本，例如 `ghcr.io/kid941005/thlredguo-gateway:v1.4.0`；如需跟随最新版本，将标签改为 `latest`。然后执行：
 
 ```bash
 docker compose pull
@@ -85,17 +88,16 @@ docker compose up -d
 
 ## 配置
 
-常用设置可写入 .env，完整示例见 [.env.example](.env.example)。
+环境变量都直接填写在 `docker-compose.yml` 的 `services.gateway.environment` 中，使用带引号的字符串值；镜像版本和端口分别修改 `image`、`ports`。文件不含 `${...}` 变量插值，宿主机环境变量不会覆盖这些字面值。
 
-| 变量 | 默认值 | 用途 |
+| Compose 配置项 | 默认值 | 用途 |
 | --- | --- | --- |
-| GW_TAG | latest | GHCR 镜像标签，可固定已发布版本 |
-| GW_BIND | 127.0.0.1 | 宿主机监听地址 |
-| GW_PORT | 8080 | 宿主机端口 |
+| image | ghcr.io/kid941005/thlredguo-gateway:v1.4.0 | 镜像与版本标签 |
+| ports | 127.0.0.1:8080:8080 | 宿主机监听地址、宿主机端口、容器端口 |
 | CACHE_TTL_MIN | 180 | 解密缓存保留分钟，0 关闭时间淘汰 |
 | CACHE_MAX_MB | 2048 | 解密缓存容量上限，0 不限容量 |
 | CACHE_SWEEP_SEC | 300 | 缓存清理间隔，单位秒 |
-| CACHE_MAX_FILES | 0 | 可选成品文件数上限，0 不限数量 |
+| HONGGUO_CACHE_MAX_FILES | 0 | 可选成品文件数上限，0 不限数量 |
 | MEDIA_CONCURRENCY | 2 | 下载解密并发数，范围 1～8 |
 | HG_TRANSCODE | 0 | 设为 1 将媒体转为 H.264/AAC，适合不支持 HEVC 的浏览器 |
 | PLAYBACK_IDENTITY_TTL_HOURS | 720 | 播放身份持久化有效期，单位小时 |
