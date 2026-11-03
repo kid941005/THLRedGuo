@@ -104,6 +104,15 @@ test('prepare reports pending/failed without waiting, explicit retry can recover
   assert.equal(Stream.prepare('791', 'best').state, 'ready');
 });
 
+test('failed preparation exposes safe upstream diagnostics and a stable error code',async t=>{
+  mockDownload(t,async()=>{throw Object.assign(new Error('safe response failure'),{code:'PLAYBACK_EMPTY_RESPONSE',diagnostic:{http_status:200,body_bytes:0,log_id:'safe-id'}});});
+  Stream.prepare('794','best');
+  let result;
+  for(let i=0;i<100;i++){result=Stream.prepare('794','best');if(result.state==='failed')break;await new Promise(resolve=>setTimeout(resolve,5));}
+  assert.equal(result.code,'PLAYBACK_EMPTY_RESPONSE');assert.equal(result.diagnostic.body_bytes,0);
+  assert.equal(result.diagnostic.log_id,'safe-id');assert.equal(Stream.cachedPath('794','best'),null);
+});
+
 test('ready playback leases protect cached files during later Range requests',async t=>{
   mockDownload(t,async()=>valid);
   const file=await Stream.ensureDecrypted('793','best');

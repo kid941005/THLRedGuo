@@ -31,6 +31,7 @@ WORKDIR /app
 
 # 网页、网关与内置取流服务
 COPY server/ /app/server/
+COPY package.json /app/package.json
 
 # 兜底：即使 .dockerignore 被绕过，也不让本地运行期生成的设备身份/密钥进入镜像
 # （镜像会推到公开的 GHCR，这种文件一旦进去等于泄露 device_id 与 api key）

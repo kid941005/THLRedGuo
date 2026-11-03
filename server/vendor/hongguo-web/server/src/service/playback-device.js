@@ -33,13 +33,16 @@ function identityFile() {
 function readIdentity() {
   try {
     const value = JSON.parse(fs.readFileSync(identityFile(), 'utf8'));
-    const hours = Number(process.env.PLAYBACK_IDENTITY_TTL_HOURS || 720);
     if (value.version !== 1 || !/^\d{1,30}$/.test(value.device_id) || !/[1-9]/.test(value.device_id) ||
         !/^\d{1,30}$/.test(value.iid) || !/[1-9]/.test(value.iid) ||
         !/^[a-f0-9-]{36}$/i.test(value.cdid) || !Number.isFinite(value.created_at) ||
-        Date.now() < value.created_at || Date.now() - value.created_at > (hours > 0 ? hours : 720) * 3600000) return null;
+        !identityFresh(value.created_at)) return null;
     return Object.freeze(value);
   } catch (_) { return null; }
+}
+function identityFresh(createdAt) {
+  const hours = Number(process.env.PLAYBACK_IDENTITY_TTL_HOURS || 720);
+  return Date.now() >= createdAt && Date.now() - createdAt <= (Number.isFinite(hours) && hours > 0 ? hours : 720) * 3600000;
 }
 function saveIdentity(value) {
   const file = identityFile();
@@ -69,6 +72,7 @@ const RETRY_COOLDOWN_MS = 60000;
 
 /** 当前注册结果（Promise）。成功后永久复用；失败仅在冷却期内复用。 */
 let registration = null;
+let registeredAt = 0;
 
 /** 当前缓存的失败时间戳（毫秒）；0 表示缓存的是成功结果。 */
 let failedAt = 0;
@@ -124,9 +128,10 @@ function buildBody(now, cdid) {
  * 冷却结束后自动重新注册（无需重启应用）。
  */
 function getPlaybackDevice() {
+  if (registeredAt && !identityFresh(registeredAt)) { registration = null; registeredAt = 0; }
   if (registration === null) {
     const saved = readIdentity();
-    if (saved) registration = Promise.resolve(saved);
+    if (saved) { registration = Promise.resolve(saved); registeredAt = saved.created_at; failedAt = 0; }
   }
   if (registration !== null) {
     if (failedAt === 0) return registration;
@@ -170,6 +175,7 @@ function getPlaybackDevice() {
       if (deviceId === '' || iid === '' || code !== 0) throw new Error('无效的注册响应');
       const identity = Object.freeze({ version: 1, device_id: deviceId, iid, cdid, created_at: now });
       saveIdentity(identity);
+      registeredAt = identity.created_at;
       return identity;
     } catch (e) {
       throw Object.assign(new Error('匿名播放设备注册失败，请稍后重试'), {
@@ -191,6 +197,7 @@ function getPlaybackDevice() {
  */
 function resetPlaybackDevice({ forget = false } = {}) {
   registration = null;
+  registeredAt = 0;
   failedAt = 0;
   if (forget) { try { fs.unlinkSync(identityFile()); } catch (_) {} }
 }

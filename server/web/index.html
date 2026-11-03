@@ -522,7 +522,7 @@
         }
         first = false;
         if (ticket !== playSequence) return;
-        if (prepared.state === 'failed') throw new Error(prepared.error || '媒体准备失败');
+        if (prepared.state === 'failed') throw new Error((prepared.code ? '[' + prepared.code + '] ' : '') + (prepared.error || '媒体准备失败'));
         if (prepared.state === 'ready') break;
         el.playerStatus.textContent = prepared.stage === 'queued' ? '正在等待取流资源，请稍候…' : '正在下载并准备第 ' + ep.index + ' 集…';
         await pause(++polls <= 3 ? 400 : 1500, signal);

@@ -67,7 +67,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 ## 更新与持久化
 
-直接修改 Compose 的 `image` 标签选择版本，例如 `ghcr.io/kid941005/thlredguo-gateway:v1.4.0`；如需跟随最新版本，将标签改为 `latest`。然后执行：
+直接修改 Compose 的 `image` 标签选择版本，例如 `ghcr.io/kid941005/thlredguo-gateway:v1.4.1`；如需跟随最新版本，将标签改为 `latest`。然后执行：
 
 ```bash
 docker compose pull
@@ -92,7 +92,7 @@ docker compose up -d
 
 | Compose 配置项 | 默认值 | 用途 |
 | --- | --- | --- |
-| image | ghcr.io/kid941005/thlredguo-gateway:v1.4.0 | 镜像与版本标签 |
+| image | ghcr.io/kid941005/thlredguo-gateway:v1.4.1 | 镜像与版本标签 |
 | ports | 127.0.0.1:8080:8080 | 宿主机监听地址、宿主机端口、容器端口 |
 | CACHE_TTL_MIN | 180 | 解密缓存保留分钟，0 关闭时间淘汰 |
 | CACHE_MAX_MB | 2048 | 解密缓存容量上限，0 不限容量 |

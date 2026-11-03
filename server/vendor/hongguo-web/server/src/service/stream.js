@@ -478,9 +478,17 @@ function prepare(vid, quality, retry = false, background = false) {
     job = { state: 'preparing', at: Date.now(), error: '' };
     preparations.set(key, job);
     ensureDecrypted(vid, quality, { background }).then(() => { job.state = 'ready'; job.at = Date.now(); })
-      .catch(e => { job.state = 'failed'; job.error = e.message; job.at = Date.now(); });
+      .catch(e => {
+        job.state = 'failed'; job.error = e.message; job.at = Date.now();
+        job.code = /^[A-Z0-9_]{1,80}$/.test(e.code || '') ? e.code : 'MEDIA_PREPARATION_FAILED';
+        job.diagnostic = e.diagnostic || null;
+        // Do not log media URLs, request query, device IDs, cookies or response bodies.
+        Log.warn('[playback] ' + job.code + (job.diagnostic ? ' ' + JSON.stringify(job.diagnostic) : ''));
+      });
   }
-  return { state: job.state, stage: job.state === 'ready' ? 'ready' : operations.get(key)?.stage || job.state, error: job.state === 'failed' ? job.error : '' };
+  return { state: job.state, stage: job.state === 'ready' ? 'ready' : operations.get(key)?.stage || job.state,
+    error: job.state === 'failed' ? job.error : '', code: job.state === 'failed' ? job.code || 'MEDIA_PREPARATION_FAILED' : '',
+    diagnostic: job.state === 'failed' ? job.diagnostic || null : null };
 }
 async function prewarm(vid, quality) {
   const job = prepare(vid, quality);

@@ -1,6 +1,6 @@
 {
   "name": "thlredguo-docker",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": true,
   "description": "THLRedGuo Docker browser interface and playback service",
   "scripts": {

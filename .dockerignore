@@ -2,6 +2,7 @@
 **
 !server/
 !server/**
+!package.json
 server/vendor/hongguo-web/README.md
 server/vendor/hongguo-web/**/node_modules
 server/vendor/hongguo-web/data

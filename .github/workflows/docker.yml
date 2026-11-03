@@ -44,7 +44,7 @@ jobs:
       - name: Verify Alpine image before publishing
         run: |
           docker build -f server/Dockerfile -t thlredguo-gateway:verify .
-          docker run --rm --init --entrypoint node -v "$PWD/tests:/app/tests:ro" thlredguo-gateway:verify --test /app/tests/runtime.test.cjs /app/tests/media.test.cjs /app/tests/api.test.cjs /app/tests/application.test.cjs /app/tests/supervisor.test.cjs /app/tests/web.test.cjs /app/tests/gateway.test.cjs /app/tests/ffmpeg.test.cjs
+          docker run --rm --init --entrypoint node -v "$PWD/tests:/app/tests:ro" thlredguo-gateway:verify --test /app/tests/runtime.test.cjs /app/tests/media.test.cjs /app/tests/api.test.cjs /app/tests/playback-response.test.cjs /app/tests/application.test.cjs /app/tests/supervisor.test.cjs /app/tests/web.test.cjs /app/tests/gateway.test.cjs /app/tests/ffmpeg.test.cjs
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io

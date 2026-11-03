@@ -15,9 +15,9 @@
  * 2026-10-27 上游变化与修复（同步自 jackotom/hongguo-drama 3.9 / 5febca2）：
  *   上游开始校验播放请求的设备身份：每次随机合成、互不关联的 iid/device_id
  *   会被软拦截 —— HTTP 200 + 0 字节 body，表现为「预热失败：App 接口未返回 data」。
- *   同时该接口不再接受签名请求，需改为「匿名设备注册 + 无签名请求」：
+ *   以下无签名请求为历史实现；2026-11-03 已按当前上游恢复独立播放签名。
  *   1) playback-device.js 调 device_register 注册匿名设备（进程内复用）；
- *   2) 播放请求 query 使用注册返回的 device_id/iid，不带任何签名头；
+ *   2) 播放请求使用注册身份，按当前协议生成完整签名并选取分支 0；
  *   3) UA 换成 com.phoenix.read/71532（PLAYBACK_UA）；
  *   4) 片源内联在 video_model.video_list 时无需再请求 fallback_api。
  */
@@ -28,6 +28,39 @@ const Crypto = require('../util/crypto');
 const Http = require('../util/http');
 const Json = require('../util/json');
 const Log = require('../util/log');
+const PlaybackSign = require('../core/playback-sign');
+
+const EMPTY_RESPONSE_COOLDOWN_MS = 60000;
+let emptyUntil = 0;
+let lastEmptyDiagnostic = null;
+
+function playbackError(code, message, response, text = '') {
+  const diagnostic = { http_status: response?.status || 0, body_bytes: Buffer.byteLength(text),
+    content_type: String(response?.header?.('content-type') || '').slice(0, 120),
+    log_id: String(response?.header?.('x-tt-logid') || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100) };
+  return Object.assign(new Error(message), { code, diagnostic });
+}
+
+async function requestPlayback(body, identity) {
+  if (Date.now() < emptyUntil) throw Object.assign(new Error('上游播放接口持续返回空响应，请等待 ' + Math.ceil((emptyUntil - Date.now()) / 1000) + ' 秒后重试；原因尚未确认'),
+    { code: 'PLAYBACK_EMPTY_RESPONSE', diagnostic: lastEmptyDiagnostic });
+  try { return await postPlayback(body, identity); }
+  catch (first) {
+    if (first.code !== 'PLAYBACK_EMPTY_RESPONSE') throw first;
+    // Preserve the registered identity: an empty body alone is not proof it is invalid.
+    await new Promise(resolve => setTimeout(resolve, 500));
+    if (Date.now() < emptyUntil) throw Object.assign(new Error('上游播放接口持续返回空响应，请稍后重试'), { code: first.code, diagnostic: lastEmptyDiagnostic });
+    try { return await postPlayback(body, identity, 'api5-normal-hl.fqnovel.com'); }
+    catch (second) {
+      if (second.code === 'PLAYBACK_EMPTY_RESPONSE') {
+        emptyUntil = Date.now() + EMPTY_RESPONSE_COOLDOWN_MS; lastEmptyDiagnostic = second.diagnostic;
+        Log.warn('播放接口连续空响应，暂停请求 60 秒：' + JSON.stringify(second.diagnostic));
+        second.message = '上游播放接口连续返回空响应（HTTP 200、正文 0 字节），已暂停请求 60 秒。需检查容器网络出口或上游接口变化，不能据此确定设备身份被拒';
+      }
+      throw second;
+    }
+  }
+}
 
 /** 接口地址（尾斜杠固定，签名与路由都以它为准）。 */
 const VIDEO_API = 'https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/';
@@ -70,10 +103,10 @@ async function fetch(vid, quality) {
     throw new Error('分集编号无效');
   }
 
-  // ---- 1. 无签名 POST multi_video_model/v1（使用注册的匿名身份）----
+  // ---- 1. 签名 POST multi_video_model/v1（使用注册的匿名身份）----
   const body = Buffer.from(Json.stringify(payload(vid)));
   const identity = await getPlaybackDevice();
-  const j = await postPlayback(body, identity);
+  const j = await requestPlayback(body, identity);
   if (Json.optInt(j.Code, 0) !== 0 || Json.optInt(j.code, 0) !== 0) {
     throw new Error('App 接口暂未提供本集播放信息');
   }
@@ -238,7 +271,7 @@ const DEVICE_BASE = {
  */
 
 /**
- * 播放请求（无签名）。
+ * 播放请求签名独立于目录签名实现；当前协议使用分支 0 和注册身份。
  *
  * 2026-10-27 起该接口不再接受签名请求：随机合成 ID + 全套签名头会被
  * 软拦截（HTTP 200 + 0 字节）；平台注册的匿名身份 + 无签名则正常返回片源。
@@ -247,38 +280,29 @@ const DEVICE_BASE = {
  * query 编码必须复刻 python 的 urllib.parse.quote 兜底行为：
  * !'()* 也要编成 %XX（resolution=1280*2772 里的 * 就在此列）。
  */
-async function postPlayback(body, identity) {
-  const q = Object.assign({}, DEVICE_BASE, {
-    device_id: identity.device_id,
-    iid: identity.iid,
-    _rticket: String(Date.now()),
-  });
-  let qs = '';
-  for (const k of Object.keys(q)) {
-    if (qs.length > 0) qs += '&';
-    qs += pyEncode(k) + '=' + pyEncode(String(q[k]));
-  }
-  const url = VIDEO_API + '?' + qs;
+function playbackRequest(body, identity, host = VIDEO_API_HOST) {
+  if (![VIDEO_API_HOST, 'api5-normal-hl.fqnovel.com'].includes(host)) throw new Error('不支持的播放接口域名');
+  return PlaybackSign.playbackRequest(body, { device_id: identity.device_id, iid: identity.iid, cdid: identity.cdid }, host);
+}
 
-  const headers = {};
-  headers['User-Agent'] = PLAYBACK_UA;
-  headers.Accept = 'application/json; charset=utf-8,application/x-protobuf';
-  headers['Content-Type'] = 'application/json; charset=UTF-8';
-
+async function postPlayback(body, identity, host = VIDEO_API_HOST) {
+  const request = playbackRequest(body, identity, host);
   const res = await Http.send({
-    url, method: 'POST', timeoutMs: 15000, headers, body,
+    ...request, method: 'POST', timeoutMs: 15000, followRedirect: false,
   });
   if (res.status !== 200) {
-    throw new Error('App 接口 HTTP ' + res.status);
+    throw playbackError('PLAYBACK_HTTP_ERROR', '上游播放接口 HTTP ' + res.status, res);
   }
   const text = res.text();
-  const j = Json.parseObject(text);
+  if (text.length === 0) throw playbackError('PLAYBACK_EMPTY_RESPONSE', '上游播放接口返回空响应（HTTP 200、正文 0 字节）', res, text);
+  let j;
+  try { j = Json.parseObject(text); }
+  catch (_) { throw playbackError('PLAYBACK_INVALID_RESPONSE', '上游播放接口返回无法解析的数据', res, text); }
+  if (Json.optInt(j.Code, 0) !== 0 || Json.optInt(j.code, 0) !== 0) {
+    throw playbackError('PLAYBACK_BUSINESS_ERROR', '上游播放接口拒绝请求（业务码 ' + Json.optInt(j.Code, Json.optInt(j.code, 0)) + '）', res, text);
+  }
   if (j === null || Json.optObj(j.data) === null) {
-    // 空响应：设备身份被拒 / IP 风控 / 接口变更。调试时打出原始响应。
-    const hint = text.trim() === '' ? '（空响应，疑似设备身份被拒）' : '';
-    throw new Error('App 接口未返回 data' + hint
-      + (Log.env('HG_APPSOURCE_DEBUG', null) !== null
-        ? '（原始响应: ' + text + '）' : ''));
+    throw playbackError('PLAYBACK_MISSING_DATA', '上游播放接口响应缺少 data，需核对接口版本与响应结构', res, text);
   }
   return j;
 }
@@ -522,4 +546,5 @@ module.exports = {
   API_DOMAINS,
   VOD_DOMAINS,
   URL_CONSTANTS,
+  playbackRequest,
 };
