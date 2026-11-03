@@ -29,8 +29,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test runtime
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg && python -m pip install pyyaml
       - name: Verify source before publishing
         run: |
+          npm run check
           npm test
           npm run test:vendor
       - uses: docker/setup-qemu-action@v3
