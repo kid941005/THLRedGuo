@@ -1,248 +1,87 @@
-# 红果网关（Docker）
+# Docker 网页服务维护说明
 
-把「红果短剧」的数据与取流能力放到服务端，客户端通过一个 JS 数据源脚本消费。
-这样 iOS / tvOS 不再需要导入 APK，也能拿到服务端解密后的直链。
+部署入口与常用命令见[根目录 README](../README.md)。维护对象为容器内网页和服务端，不再提供 App 数据源脚本下发接口。
 
-## 组成
+## 请求链路
 
-```
-server/
-├── gateway.js               # 入口：只装路由与启停生命周期
-├── lib/
-│   ├── config.js            # 路径与环境变量（唯一取值处）
-│   ├── http.js              # JSON 响应、对外基址推导
-│   ├── upstream.js          # 内置服务守护、密钥托管、设备身份备份
-│   ├── proxy.js             # /gw/* 反向代理（含 401 重取密钥后重放）
-│   └── cache.js             # 解密流缓存清理（TTL + 容量）
-├── web/index.html           # 内置网页界面（单文件，零外链）
-├── Dockerfile
-└── vendor/hongguo-web/      # 第三方 MIT 组件（见 LICENSE），提供签名/解密/取流
-    └── server/src/main.js   # 内置服务，容器内监听 127.0.0.1:8000
-assets/sources/hongguo_gw.js # 下发给客户端的数据源脚本（占位符由网关注入）
-```
+浏览器访问 gateway.js 的 /，网页以同源请求调用 /gw/*。网关注入内部 x-api-key 后反代至 127.0.0.1:8000，内置服务负责列表、搜索、分集与媒体取流。内部密钥不需要配置到浏览器。
 
-## 起服务
+gateway 同时通过 lib/application.js 提供账号、个人数据、下载和后台 API。SQLite 使用 Node 24 内置 node:sqlite，WAL、外键和事务开启；业务接口按会话中的 user_id 隔离，客户端提交的 user_id 不作为权限依据。
 
-镜像由 GitHub Actions 构建并推送到 GHCR（`linux/amd64` + `linux/arm64`）。
-`docker-compose.yml` **只引用镜像，不含 build**，所以拉取与构建互不干扰。
+| 路径 | 行为 |
+| --- | --- |
+| GET /、/index.html | 网页界面 |
+| GET /api | 服务端点清单 |
+| GET /healthz | 启动就绪、密钥与缓存摘要 |
+| GET /gw/prepare?vid=编号&quality=best | 立即返回 preparing、ready 或 failed；retry=1 显式重试失败任务 |
+| GET/HEAD /gw/stream?vid=编号&quality=best | 成品媒体读取，支持 Range |
+| /gw/rank、browse、latest、search、episodes、filters、img、health | 网页所需的数据接口 |
+| /api/auth/status、setup、login | 首次初始化与登录 |
+| /api/auth/me、logout、password | 当前账号、退出、修改密码 |
+| /api/favorites、/api/history、/api/library/:series | 个人追剧与观看记录 |
+| /api/playback/start、/api/progress、/api/preferences | 播放会话、续播进度与自动连播偏好 |
+| /api/downloads、/:id、/:id/file、/archive?ids=... | 创建/查询下载、取消/重试/删除、保存单集与 ZIP |
+| /api/admin/summary、users、users/:id、downloads | 管理员概况、用户管理和全站任务 |
 
-```bash
-docker compose pull
-docker compose up -d
-curl http://127.0.0.1:8080/healthz
-```
+除网页、健康检查、端点清单和初始化/登录入口外，其余接口均要求有效会话。修改请求使用 JSON、同源校验与 X-CSRF-Token（由 /api/auth/me 返回）；跨站请求和越权访问会被拒绝。Cookie 为 HttpOnly、SameSite=Strict，HTTPS 部署配置 Secure。密码重置、改密、停用和角色变更会使相关旧会话失效。至少保留一位启用的管理员。
 
-> 首次启动要等内置服务就绪（通常 5–10 秒），在此之前 `/healthz` 返回 **503**（`ok:false`），属正常现象。
-> 就绪后返回 200 且 `ok:true`、`has_key:true`、`device_persisted:true`。
+已移除 /sources/*。网页、接口和视频使用同一来源，不需要对外地址占位符或 PUBLIC_BASE。暂不支持把网页部署在反向代理的任意子路径下。
 
-固定版本，避免 `latest` 漂移：
+## 文件与运行参数
 
-```bash
-GW_TAG=v1.1.1 docker compose up -d
-```
+- gateway.js：装配路由与启停；作为模块导入时不启动进程，createGatewayServer 供接口测试使用。
+- lib/upstream.js：子进程守护、持续探活、内部密钥获取与旧身份迁移。
+- lib/proxy.js：HTTP 透传与密钥过期后的重试。
+- lib/database.js、accounts.js：数据库迁移、账号、scrypt 密码和会话。
+- lib/library.js：追剧、历史、逐集进度；使用播放会话和序号忽略迟到的旧进度。
+- lib/downloads.js、zip.js：持久任务、有界下载、容量限制、文件权限和流式 ZIP。
+- vendor 的 service/cache-store.js：统一管理缓存容量、TTL、文件数量和活动引用。
+- vendor 的 service/stream.js：有界下载、独立工作目录、原子发布与准备状态；解密在 Worker 中运行。
+- vendor/hongguo-web：保留第三方运行时代码和许可证；本地修改记录见 LOCAL-CHANGES.md。
 
-**从源码构建**时叠加覆盖文件（base 文件保持干净）：
+| 进程环境变量 | 容器默认 | 说明 |
+| --- | --- | --- |
+| PORT | 8080 | 网页入口端口 |
+| HK_PORT | 8000 | 内部服务端口 |
+| HONGGUO_DATA_DIR | /app/data | 缓存根目录与设备身份备份 |
+| HONGGUO_STREAM_CACHE | /app/data/stream-cache | 解密缓存目录 |
+| CACHE_TTL_MIN | 180 | 时间淘汰，单位分钟 |
+| CACHE_MAX_MB | 2048 | 容量淘汰，单位 MB |
+| CACHE_SWEEP_SEC | 300 | 清扫间隔，单位秒 |
+| HONGGUO_CACHE_MAX_FILES | 0 | 可选文件数上限；Compose 用 CACHE_MAX_FILES 配置 |
+| MEDIA_CONCURRENCY | 2 | 处理并发，范围 1～8，最多排队 64 个请求 |
+| HG_TRANSCODE | 0 | 取流默认不转码 |
+| PLAYBACK_IDENTITY_TTL_HOURS | 720 | 播放身份持久化有效期 |
+| TZ | Asia/Shanghai | 时区 |
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
-```
+Compose 透传根目录 .env.example 中列出的设置。镜像包含 ffmpeg，HG_TRANSCODE=1 可以启用 H.264/AAC 转码；转码后使用独立缓存。
 
-覆盖文件把镜像打成 `:dev` 标签，不会覆盖 ghcr 上的 `:latest` / `:v1.1.1`，
-避免之后 `pull` 被本地产物遮蔽（这是把 `build` 与 `image` 写在同一文件里的常见坑）。
+内部密钥和目录身份通过 HONGGUO_KEY_FILE 直接原子写入 /app/data/apikeys.json；播放身份单独写入 /app/data/playback-device.json。旧版卷中的 apikeys.json 可直接复用；旧镜像层里的身份文件只用于一次迁移。日志不输出完整密钥和管理口令。
 
-端口冲突时改宿主机端口：`GW_PORT=18080 docker compose up -d`。
+## 验证与排障
 
-### 浏览器验证
+启动故障先看 docker compose logs --tail=100 gateway。健康检查会实际探测内部 /health 和 /api-key；缺少有效密钥、内部进程无响应时返回 503。后台每五秒探测，状态超过十五秒未更新也不视为就绪；长期不响应会重启内部子进程，停机时不会再次拉起。HTTP 200 只确认本地服务，不代替上游取流验收。
 
-起服务后直接打开 `http://<服务器IP>:8080/`（端口映射到别处就换成你的端口，例如 NAS 上的 `31080`），
-会看到内置的剧库页面：顶部是榜单/分类标签，点卡片可看简介与分集，选一集直接在页面里播放。
-
-页面完全本地化（无 CDN、无外链脚本），断网也能打开界面；封面图来自上游 CDN，取不到时留白不报错。
-如果列表是空的，页面会明确区分「上游风控返回空」和「请求失败」——前者等一会儿再试就行。
-
-### 网络暴露（重要）
-
-网关**没有鉴权**：`/gw/*` 谁都能调，调用方借的是容器里的设备身份。
-所以默认只绑定回环地址（`GW_BIND` 默认 `127.0.0.1`），此时只有宿主机自己能访问。
-
-| 场景 | 做法 |
-| :--- | :--- |
-| 只有本机用（例如同机转码/调试） | 保持默认，不动 |
-| 电视/手机在同一局域网 | `GW_BIND=0.0.0.0 docker compose up -d`，并确保该端口不暴露到公网 |
-| 需要公网访问 | 保持回环，前面挂一层带鉴权（Basic Auth / IP 白名单）的反向代理，把 `/sources/*` 与 `/gw/*` 转发进来 |
-
-导入脚本时地址要跟着改：局域网场景填 `http://<局域网IP>:8080/sources/hongguo_gw.js`；
-反向代理场景填对外域名，并给网关设 `PUBLIC_BASE=https://你的域名`（否则脚本里注入的是内网地址）。
-
-> 包可见性继承仓库：当前仓库公开，镜像同样**公开**，无需登录即可拉取。
-> 若日后仓库转为私有，需先 `docker login ghcr.io -u <用户名> -p <PAT>`。
-> 已验证镜像包含 `linux/amd64` 与 `linux/arm64` 两个架构。
-
-预期返回：
-
-```json
-{"ok":true,"uptime_s":9,"upstream":"http://127.0.0.1:8000","has_key":true,
- "source":"/sources/hongguo_gw.js"}
-```
-
-`ok` 为 `false` 表示内置服务还没就绪（启动后约 3–10 秒），或签名后端异常。
-
-### 没有 Docker 时：本地直跑
-
-网关本身零依赖，只要有 Node 18+ 就能跑，用于验证逻辑与数据源，不必先做镜像：
+CI 运行静态检查、完整回归测试与 vendor 离线自检，再构建镜像，挂载测试并在 Alpine 容器内执行媒体回归。容器冒烟由 tools/container_smoke.cjs 执行，不依赖真实上游：
 
 ```bash
-node server/gateway.js
-curl http://127.0.0.1:8080/healthz
+node tools/container_smoke.cjs http://127.0.0.1:8080
 ```
 
-与容器内行为一致的部分：反代与鉴权注入、spider 下发与地址注入、缓存清理、上游进程监管。
-**不一致的部分**：Node 版本与镜像基础镜像（alpine/musl）、路径与文件权限、健康检查探针（`wget`）、卷挂载与端口映射。
-也就是说——**逻辑问题不用镜像就能查出来，只有"打包/运行环境"问题必须构建镜像**。
+真实播放验收需额外覆盖：冷/热缓存、首屏到续页、失败重试、清扫期间取流、Range 拖动、容器重建以及目标浏览器媒体兼容性。没有上游错误响应或网络证据时，不应直接把空列表和播放失败归类为风控。
 
-## 接到 App
+网关不转发 /gw/api-key、/gw/admin/*、/gw/download/task。批量下载走新的 /api/downloads，拥有独立的任务、配额与账号权限；只有任务所有者或管理员可以保存文件和操作任务。文件路径只由服务端生成的 UUID 构成，剧名只用于下载文件名。
 
-1. App → 设置 → JS 数据源插件管理 → **网络订阅 / URL 导入插件**
-2. 填：`http://<服务器IP>:8080/sources/hongguo_gw.js`
-   —— 注意：默认只监听 `127.0.0.1`，手机/电视要访问必须先用
-   `GW_BIND=0.0.0.0 docker compose up -d` 放开（见「网络暴露」）。
-   若此时仍连不上，说明是网络层问题（防火墙 / 安全组 / 不在同一网段），不是脚本问题。
-3. 导入后切换站源为「红果网关（自建）」
+任务启动时先从内部 /episodes 验证所选分集，再使用 /prepare 和 /stream 取得服务端成品，写入 downloads/:id.mp4.part，完成后原子更名。启动会恢复排队中的任务并清理未完成的 .part；下载空间统计覆盖已完成文件和活动写入，取消后清理半成品。单任务最多 512MB，执行最长十分钟；下载请求不受网页关闭影响。
 
-脚本里的网关地址是**按请求 Host 动态注入**的，所以同一份镜像部署到
-`192.168.1.10:8080` 或 `drama.example.com` 都能直接用；放在反向代理后面时，
-设置 `PUBLIC_BASE=https://drama.example.com` 可强制指定对外地址。
+首次启动的 /app/data/setup-token 只用于初始化管理员；建好后删除。账号数据库位于 /app/data/app.sqlite，备份和迁移需停机复制完整数据卷。当前只支持单实例任务管理。
 
-## 接口
+首次媒体请求可先调用 /gw/prepare，准备成功后再读取 /gw/stream；Range 读取不会被用于触发一个字节的冷缓存探测。网页对快速切换、关闭详情和重新搜索都使用取消信号与请求代次，旧响应不会覆盖新状态。
 
-| 路径 | 说明 |
-| :--- | :--- |
-| `GET /healthz` | 健康检查（是否就绪、是否已拿到 api key） |
-| `GET /sources/hongguo_gw.js` | 下发数据源脚本（自动注入基址与默认清晰度） |
-| `ANY /gw/*` | 反代到内置服务，自动补 `x-api-key` |
-| `GET /` | 内置网页界面（浏览器直接打开，可浏览/搜索/播放） |
-| `GET /api` | 端点自述 JSON（脚本用；原 `/` 的返回） |
+播放每二十秒刷新成品租约（四十五秒保护窗口），播放后段预准备下一集。后台下载与推测准备使用 background=1，忙时不会抢占前台请求的排队位置；已开始的下载/解密不能被强制抢占。准备响应包含 stage（排队、下载、解密或封装），网页先短间隔探测再退回普通轮询。
 
-`/gw/` 下可用：`rank` `browse` `latest` `search` `episodes` `play` `stream` `video_url` `img`。
-密钥由网关进程启动时自动向内置服务申请，客户端不需要也不应该知道。
+网络错误恢复会重建本集媒体地址并回到最后已知位置，保留倍速/音量；最多两次自动恢复。HTTP 失败可能被浏览器报告为“不支持媒体”，此时用一个字节的已准备媒体读取区分登录失效、网络失败与编码不兼容。持续无法解码应开启 H.264 转码。恢复不会绕过权限，也不会对未知编码无限重试。
 
-### 标签策略
+## 第三方维护
 
-- `v*`（如 `v1.1.1`）：会同时触发仓库已有的 App 打包工作流（macOS runner，耗时且计费）。
-- `gw-*`（如 `gw-v1.2.0`）：**只构建网关镜像**，不触发 App 打包，仅调整网关时推荐用这个前缀。
-
-## 环境变量
-
-| 变量 | 默认 | 说明 |
-| :--- | :--- | :--- |
-| `PORT` | `8080` | 对外端口 |
-| `HK_PORT` | `8000` | 内置服务端口（仅容器内） |
-| `PUBLIC_BASE` | 空 | 对外基址覆盖，反向代理场景使用 |
-| `HK_QUALITY` | `best` | 注入脚本的默认清晰度 |
-| `HONGGUO_DATA_DIR` | `/app/data` | 解密缓存根目录 + 设备身份备份目录，**必须挂卷** |
-| `HONGGUO_STREAM_CACHE` | `/app/data/stream-cache` | 解密成品缓存目录 |
-| `CACHE_TTL_MIN` | `180` | 缓存保留分钟数，`0` 表示不按时间淘汰 |
-| `CACHE_MAX_MB` | `2048` | 缓存总量上限，`0` 表示不限 |
-| `CACHE_SWEEP_SEC` | `300` | 清理扫描间隔（秒） |
-| `HG_TRANSCODE` | `0` | 是否开启转码；取流是纯解密，默认关闭 |
-
-`/healthz` 会回报 `cache`（目录、文件数、占用 MB）与 `device_persisted`（设备身份备份是否就位）。
-内置服务未就绪时返回 **503**，因此 Docker 健康检查能真实反映故障，而不是永远“通过”。
-
-### 设备身份是怎么持久化的
-
-内置服务把 `device_id`、api key、管理口令写在 `server/config/apikeys.json`（相对 vendor 根目录，
-**不受 `HONGGUO_DATA_DIR` 影响**）。这个位置在镜像层里，容器重建就会丢，于是网关做了两层：
-
-1. 启动前：若镜像内的 `apikeys.json` 缺失而卷里有 `$HONGGUO_DATA_DIR/apikeys.json`，先还原；
-2. 拿到密钥后：把 `apikeys.json` 备份到 `$HONGGUO_DATA_DIR/apikeys.json`（临时文件 + 改名）。
-
-所以 **只要卷还在，重建容器、升级镜像都不会换 `device_id`**。删卷则会换。
-
-## 排障
-
-### 1. `/healthz` 一直 `ok:false`
-
-内置服务没起来或端口被占用。看容器日志里 `[gateway]` 之前的报错：
-
-```bash
-docker logs -f thlredguo-gateway
-```
-
-常见原因：`HK_PORT` 被改成了容器里也被占用的端口；`server/vendor/hongguo-web/server/src/main.js` 没被 COPY 进镜像（构建上下文被 `.dockerignore` 挡了）。
-
-### 2. `/gw/*` 返回 502，body 是「App 接口未返回 data（空响应，疑似设备身份被拒）」
-
-**这是上游风控，不是网关故障。** 触发条件实测包括：出口 IP 不稳定、机房 IP、device_id 频繁变化、短时间请求过多。
-
-对策按收益排序：
-1. 确认 `/app/data` 已挂卷，且 `curl /healthz` 里 `device_persisted` 为 `true`
-   （卷里应有 `/app/data/apikeys.json`，容器重建后网关会自动还原同一个 device_id）；
-2. 换稳定出口（家宽/固定 IP，或给容器配固定代理出口）；
-3. 降低频率（别并发刷详情）；
-4. 若长期不可用，改回设备端源 `hongguo-web`（360P 试看，但不受服务端风控影响）。
-
-### 3. 客户端导入脚本失败
-
-先在服务器本机确认：
-
-```bash
-curl -s http://127.0.0.1:8080/healthz
-curl -s http://127.0.0.1:8080/sources/hongguo_gw.js | head -5
-```
-
-再在手机/电视的同一网络里用浏览器打开 `http://<IP>:8080/healthz`。打不开就是网络层问题：容器只监听 8080（已 `0.0.0.0`），检查防火墙、安全组、以及是否误填了 `127.0.0.1`。
-
-### 4. 磁盘一直涨
-
-解密成品会落在 `HONGGUO_STREAM_CACHE`。网关默认每 5 分钟清理一次（TTL 180 分钟 / 上限 2 GB），可用 `CACHE_TTL_MIN`、`CACHE_MAX_MB` 调整；`/healthz` 的 `cache.files` 与 `cache.mb` 能直接看出当前占用。
-
-### 5. 校验报 `services.gateway additional properties 'name' not allowed`
-
-`name` 是**项目级键**（顶层、缩进 0），不是服务键。服务里指定容器名要用 `container_name`。
-
-```yaml
-name: thlredguo          # ✅ 顶格：项目名（可选，决定默认卷名前缀）
-services:
-  gateway:
-    container_name: thlredguo-gateway   # ✅ 服务内：容器名
-```
-
-出现这个报错，基本是编辑时把 `name:` 那行多缩进了两个空格，或者手写时写进了 `services.gateway`。
-用编辑器打开对齐一下即可；`grep -n "^\s*name:" docker-compose.yml` 能直接看到它在第几列。
-
-顺带提醒：**默认只监听 `127.0.0.1`**，NAS 上部署给电视用时要么写 `"8080:8080"`，
-要么 `GW_BIND=0.0.0.0`，否则容器正常但电视连不上。
-
-### 6. `docker build` 失败
-
-先确认构建上下文正确（必须在**仓库根目录**执行，因为 Dockerfile 要 COPY 两处路径）：
-
-```bash
-docker build -f server/Dockerfile -t thlredguo-gateway:dev .
-```
-
-若报 `COPY failed`，检查 `.dockerignore` 是否把 `server/` 或 `assets/sources/hongguo_gw.js` 排除了。
-
-## 已知限制（实测 2026-10-31）
-
-| 项 | 状态 |
-| :--- | :--- |
-| `/health`、`/api-key`、`/rank`、`/episodes` | 正常 |
-| `/stream` 取流 | **当前网络下上游返回「App 接口未返回 data（空响应，疑似设备身份被拒）」**，属上游风控，非网关问题 |
-| `/browse`、`/latest`、`/search` | 结构正常，但当前网络下返回空列表（同上，风控） |
-| 部署要求 | 出口 IP 稳定、能连通 `*.fqnovel.com` / `*.snssdk.com`；频繁换 IP 或机房 IP 更易被拒 |
-
-上游风控通过后 `/stream` 即可用；失败时 App 侧的按集回退会把这一集交给
-`hongguo-web` 源（360P 试看），不会直接黑屏。
-
-## 许可证
-
-- `server/gateway.js`：随本仓库。
-- `server/vendor/hongguo-web/`：MIT，原文见 `server/vendor/hongguo-web/LICENSE`。
-  仅引入运行所需部分：`server/src`、`server/config/config.json`（模板）、`package.json`、`LICENSE`、`README.md`；
-  已移除上游的 web 前端、`.github` 工作流、截图与打包脚本。逻辑未做修改，升级时整体替换即可。
-- **运行期生成、不入库**：`server/vendor/hongguo-web/server/config/apikeys.json`（api key / admin token / device_id）
-  与 `server/stream-cache`、`download/`。已同时写进 `.gitignore` 与 `.dockerignore`——
-  镜像要推到公开的 GHCR，这些文件一旦被 COPY 进去就等于泄露设备身份。
-  容器内运行时对应 `/app/data` 卷（`apikeys.json` 备份 + `stream-cache`）。
+保留 vendor 的原始许可证与来源注释。修改 vendor 时应保留来源说明，并运行 npm run test:vendor；离线算法自检通过不能替代网页与容器的集成测试。

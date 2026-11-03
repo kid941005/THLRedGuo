@@ -1,4 +1,4 @@
-# 短剧数据网关 —— 部署编排（只拉镜像，不构建）
+# 红果 Docker 网页版 —— 部署编排（只拉镜像，不构建）
 #
 #   docker compose pull
 #   docker compose up -d
@@ -9,7 +9,7 @@
 # 常用变量（也可写进同目录 .env）：
 #   GW_TAG=v1.1.1     固定镜像版本，默认 latest
 #   GW_PORT=8080      宿主机端口
-#   GW_BIND=127.0.0.1 监听地址，默认只允许本机；局域网访问设 0.0.0.0（网关无鉴权）
+#   GW_BIND=127.0.0.1 监听地址，默认只允许本机；局域网访问设 0.0.0.0
 
 # 项目名（顶层键，缩进必须为 0）。写成 services.gateway 下的 name 会报
 # "additional properties 'name' not allowed" —— 服务里的容器名是 container_name。
@@ -24,23 +24,30 @@ services:
     restart: unless-stopped
     stop_grace_period: 15s
 
-    # 默认只监听回环：网关不带鉴权，任何能访问端口的人都能借你的设备身份取流。
-    # 需要局域网 / 外网访问时显式放开：GW_BIND=0.0.0.0 docker compose up -d
-    # 更稳妥的做法是保持回环，前面挂一层带鉴权的反向代理。
+    # 所有剧库、媒体、下载和个人数据接口要求登录。
+    # 局域网访问显式设置 GW_BIND=0.0.0.0；公网访问放在 HTTPS 反向代理后。
     ports:
       - "${GW_BIND:-127.0.0.1}:${GW_PORT:-8080}:8080"
 
     environment:
       PORT: "8080"
       HK_PORT: "8000"
-      HK_QUALITY: "${HK_QUALITY:-best}"
       CACHE_TTL_MIN: "${CACHE_TTL_MIN:-180}"
       CACHE_MAX_MB: "${CACHE_MAX_MB:-2048}"
+      CACHE_SWEEP_SEC: "${CACHE_SWEEP_SEC:-300}"
+      HONGGUO_CACHE_MAX_FILES: "${CACHE_MAX_FILES:-0}"
+      MEDIA_CONCURRENCY: "${MEDIA_CONCURRENCY:-2}"
+      HG_TRANSCODE: "${HG_TRANSCODE:-0}"
+      PLAYBACK_IDENTITY_TTL_HOURS: "${PLAYBACK_IDENTITY_TTL_HOURS:-720}"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-}"
+      COOKIE_SECURE: "${COOKIE_SECURE:-0}"
+      SETUP_TOKEN: "${SETUP_TOKEN:-}"
+      DOWNLOAD_MAX_MB: "${DOWNLOAD_MAX_MB:-10240}"
+      DOWNLOAD_CONCURRENCY: "${DOWNLOAD_CONCURRENCY:-2}"
       TZ: "${TZ:-Asia/Shanghai}"
 
-    # 卷内存放：解密缓存 + apikeys.json 备份（设备身份）。
-    # 容器重建时镜像内的 apikeys.json 会丢，网关从这个卷里还原同一个 device_id；
-    # 删掉卷 = 下次重建换新身份，更容易被上游风控。
+    # 卷内存放：SQLite 账号/会话/个人数据、下载成品、媒体缓存和设备身份。
+    # 两类设备身份均原子写入卷，重建容器后复用；删卷会重置身份与缓存。
     volumes:
       - gateway-data:/app/data
 

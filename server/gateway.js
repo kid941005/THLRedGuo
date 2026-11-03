@@ -1,16 +1,16 @@
 'use strict';
 /**
- * 红果网关入口（THLRedGuo 数据源网关）
+ * Docker 网页版入口。
  *
  * 只做「装路由 + 启停生命周期」，具体能力都在 lib/ 里：
  *   lib/config.js    路径与环境变量（唯一取值处）
- *   lib/http.js      响应与基址推导
+ *   lib/http.js      JSON 响应
  *   lib/upstream.js  内置服务守护、密钥托管、设备身份备份
  *   lib/proxy.js     /gw/* 反向代理
- *   lib/cache.js     解密流缓存清理
+ *   lib/application.js 账号、个人数据与下载任务
  *
  * 对外只暴露一个端口：
- *   GET /sources/hongguo_gw.js  下发 CatPawOpen 数据源脚本（自动注入本机地址）
+ *   GET /                       网页界面
  *   ANY /gw/*                   反向代理到内置服务，并自动补 x-api-key
  *   GET /healthz                健康检查（内置服务未就绪时 503）
  *
@@ -21,10 +21,10 @@ const fs = require('fs');
 const http = require('http');
 
 const config = require('./lib/config');
-const { sendJson, baseUrlOf } = require('./lib/http');
+const { sendJson } = require('./lib/http');
 const upstream = require('./lib/upstream');
-const cache = require('./lib/cache');
 const { proxy } = require('./lib/proxy');
+const { createApplication } = require('./lib/application');
 
 const startedAt = Date.now();
 
@@ -60,50 +60,17 @@ function serveWeb(req, res) {
   res.end(body);
 }
 
-/**
- * 读取 spider 并注入基址。
- * 用 split/join 而不是 String.replace：replace 只替换第一次出现，
- * 且会被文件注释里的同名字样抢先命中。
- */
-function readSpiderScript(base) {
-  try {
-    const raw = fs.readFileSync(config.SPIDER_FILE, 'utf8');
-    return raw
-      .split('__GATEWAY_BASE__')
-      .join(base)
-      .split('__GATEWAY_QUALITY__')
-      .join(config.QUALITY);
-  } catch (e) {
-    // 读不到 spider 属于部署问题（镜像里漏了文件），打日志便于直接定位
-    console.error('[gateway] 读取 spider 失败:', config.SPIDER_FILE, e.message);
-    return null;
-  }
-}
-
-function healthPayload() {
+function healthPayload(provider) {
+  const health = provider.getHealth ? provider.getHealth() : null;
   return {
-    ok: upstream.isReady(),
+    ok: provider.isReady() && provider.getKey() !== '',
     uptime_s: Math.round((Date.now() - startedAt) / 1000),
     upstream: config.UPSTREAM,
-    has_key: upstream.getKey() !== '',
-    device_persisted: upstream.devicePersisted(),
-    source: '/sources/hongguo_gw.js',
-    cache: cache.summary(),
+    has_key: provider.getKey() !== '',
+    device_persisted: provider.devicePersisted(),
+    playback_device_persisted: !!(health && health.playback_device_persisted),
+    cache: health && health.cache ? health.cache : null,
   };
-}
-
-function serveSpider(req, res) {
-  const script = readSpiderScript(baseUrlOf(req));
-  if (script === null) {
-    return sendJson(res, 500, { error: 'SPIDER_MISSING' });
-  }
-  const body = Buffer.from(script, 'utf8');
-  res.writeHead(200, {
-    'content-type': 'application/javascript; charset=utf-8',
-    'content-length': body.length,
-    'cache-control': 'no-store',
-  });
-  res.end(body);
 }
 
 function indexPayload() {
@@ -111,68 +78,100 @@ function indexPayload() {
     service: 'thlredguo-gateway',
     endpoints: {
       ui: '/',
-      spider: '/sources/hongguo_gw.js',
-      proxy: '/gw/{rank,episodes,search,stream,browse,latest,play}',
+      proxy: '/gw/{rank,episodes,search,prepare,stream,browse,latest}',
       health: '/healthz',
+      login: '/api/auth/login',
+      personal: '/api/{favorites,history,downloads}',
+      admin: '/api/admin/summary',
     },
-    hint: '在 App 中：设置 → JS 数据源插件管理 → 网络订阅 / URL 导入插件 → 粘贴 spider 地址',
+    hint: '用浏览器打开根路径，浏览、搜索和播放短剧。',
   };
 }
 
-const server = http.createServer((req, res) => {
-  const pathname = (req.url || '/').split('?')[0];
+function createGatewayServer({ provider = upstream, proxyRequest = proxy, application, dataDir = config.DATA_DIR, appOptions = {} } = {}) {
+  let app = application;
+  const getApplication = () => app || (app = createApplication({ dataDir, provider, upstreamUrl: config.UPSTREAM, ...appOptions }));
+  const server = http.createServer(async (req, res) => {
+    try {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Referrer-Policy', 'same-origin');
+      res.setHeader('X-Frame-Options', 'DENY');
+      res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' http: https: data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+      if ((req.url || '').length > 16384) return sendJson(res, 414, { error: 'URL_TOO_LONG' });
+      const url = new URL(req.url || '/', 'http://gateway');
+      const pathname = (req.url || '/').split('?')[0];
 
-  if (pathname === '/healthz') {
-    // 内置服务不可用时返回 503：若一律 200，容器健康检查永远“通过”，故障发现不了
-    return sendJson(res, upstream.isReady() ? 200 : 503, healthPayload());
-  }
+      if (url.pathname.startsWith('/api/')) return await getApplication().handle(req, res, url);
 
-  if (pathname === '/sources/hongguo_gw.js' || pathname === '/sources/hongguo-gw.js') {
-    return serveSpider(req, res);
-  }
+      if (pathname === '/healthz') {
+        if (provider.refresh) await provider.refresh();
+        const payload = healthPayload(provider);
+        return sendJson(res, payload.ok ? 200 : 503, payload);
+      }
 
-  if (pathname.startsWith('/gw/')) {
-    return proxy(req, res, pathname.slice(3));
-  }
+      if (pathname.startsWith('/gw/')) {
+        // Expose only browser data/media operations; internal key/admin/download APIs stay private.
+        const allowed = new Set(['/rank', '/browse', '/latest', '/search', '/episodes', '/filters', '/prepare', '/stream', '/img', '/health']);
+        if (!allowed.has(pathname.slice(3)) || !['GET', 'HEAD'].includes(req.method)) return sendJson(res, 404, { error: 'NOT_FOUND' });
+        const application = getApplication();
+        application.originCheck(req);
+        application.accounts.authenticate(req);
+        res.setHeader('Cache-Control', 'private, no-store');
+        return proxyRequest(req, res, pathname.slice(3));
+      }
 
-  // 浏览器打开根路径给界面；脚本想要端点清单用 /api
-  if (pathname === '/' || pathname === '/index.html') {
-    return serveWeb(req, res);
-  }
+      // 网页与 API 使用同一端口、同一来源。
+      if (pathname === '/' || pathname === '/index.html') {
+        return serveWeb(req, res);
+      }
 
-  if (pathname === '/api' || pathname === '/api/') {
-    return sendJson(res, 200, indexPayload());
-  }
+      if (pathname === '/api' || pathname === '/api/') {
+        return sendJson(res, 200, indexPayload());
+      }
 
-  return sendJson(res, 404, { error: 'NOT_FOUND' });
-});
+      return sendJson(res, 404, { error: 'NOT_FOUND' });
+    } catch (e) {
+      if (!e.status) console.error('[gateway] request failed:', e.message);
+      sendJson(res, e.status || 500, { error: e.status ? e.message : '服务暂不可用，请稍后重试' });
+    }
+  });
+  server.application = getApplication;
+  server.closeApplication = () => app ? app.close() : Promise.resolve();
+  server.once('close', () => { server.closeApplication().catch(error => console.error('[gateway] close failed:', error.message)); });
+  return server;
+}
 
 // ---------------------------------------------------------------- 启动
 
-upstream.restoreKeyBackup();
-upstream.start();
-upstream.wait(60000).then((ok) => {
-  if (!ok) console.error('[gateway] 内置服务在 60s 内未就绪，代理请求将返回 502');
-  upstream.ensureKey(false);
-});
+function start() {
+  const server = createGatewayServer();
+  const app = server.application();
+  if (app.accounts.status().setupRequired) console.log('[gateway] 首次使用：从 /app/data/setup-token 读取初始化口令，在网页创建管理员（或配置 SETUP_TOKEN）。');
+  upstream.restoreKeyBackup();
+  upstream.start();
 
-server.listen(config.PORT, '0.0.0.0', () => {
-  console.log(`[gateway] listening on 0.0.0.0:${config.PORT} → ${config.UPSTREAM}`);
-  console.log(
-    `[gateway] 流缓存目录 ${config.CACHE_DIR}（TTL ${config.CACHE_TTL_MIN}min / 上限 ${config.CACHE_MAX_MB}MB）`
-  );
-});
+  server.listen(config.PORT, '0.0.0.0', () => {
+    console.log(`[gateway] listening on 0.0.0.0:${config.PORT} → ${config.UPSTREAM}`);
+    console.log(
+      `[gateway] 流缓存目录 ${config.CACHE_DIR}（TTL ${config.CACHE_TTL_MIN}min / 上限 ${config.CACHE_MAX_MB}MB）`
+    );
+  });
 
-cache.start();
 
-// ---------------------------------------------------------------- 停机
+  // -------------------------------------------------------------- 停机
 
-function shutdown() {
-  upstream.stop();
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 3000);
+  async function shutdown() {
+    upstream.stop();
+    await server.closeApplication();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000);
+  }
+
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, shutdown);
+  }
+  return server;
 }
 
-for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, shutdown);
-}
+module.exports = { createGatewayServer, start };
+if (require.main === module) start();

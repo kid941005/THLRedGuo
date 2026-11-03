@@ -1,15 +1,12 @@
-name: Build Gateway Image (GHCR)
+name: Publish Docker Image
 
-# 只构建短剧网关镜像，不参与 App 打包。
-# 触发：推送 v* 标签，或手动运行（可指定镜像标签）。
 on:
   push:
-    # v*：随应用版本一起发布；gw-*：只发布网关、不触发 App 打包
     tags: ['v*', 'gw-*']
   workflow_dispatch:
     inputs:
       tag:
-        description: '镜像标签（默认 latest）'
+        description: 'Additional image tag'
         required: false
         default: 'latest'
 
@@ -26,41 +23,41 @@ env:
 
 jobs:
   build:
-    name: build & push
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify source before publishing
+        run: |
+          npm test
+          npm run test:vendor
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Verify Alpine image before publishing
+        run: |
+          docker build -f server/Dockerfile -t thlredguo-gateway:verify .
+          docker run --rm --init --entrypoint node -v "$PWD/tests:/app/tests:ro" thlredguo-gateway:verify --test /app/tests/runtime.test.cjs /app/tests/media.test.cjs /app/tests/api.test.cjs /app/tests/application.test.cjs /app/tests/supervisor.test.cjs /app/tests/web.test.cjs /app/tests/gateway.test.cjs /app/tests/ffmpeg.test.cjs
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
+      - name: Image metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            # gw-v1.2.0 → v1.2.0，保证镜像标签与应用版本号一致
             type=match,pattern=^gw-(.*),group=1
             type=ref,event=tag
             type=raw,value=latest
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=sha,format=short
           labels: |
-            org.opencontainers.image.title=THLRedGuo Gateway
-            org.opencontainers.image.description=短剧数据网关：红果取流代理 + 数据源下发
-            org.opencontainers.image.licenses=MIT
-
+            org.opencontainers.image.title=THLRedGuo Docker Web
+            org.opencontainers.image.description=Browser interface and server-side playback
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -72,12 +69,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Summary
-        run: |
-          {
-            echo "### 镜像已推送"
-            echo '```'
-            echo "${{ steps.meta.outputs.tags }}"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"

@@ -13,8 +13,8 @@
  *   body    = 746305100000(6B) + random(32B) + AES-128-CBC(sha512(gzip) + gzip)
  *   key/iv  = sha512(sha512(random) + KDF_SALT) 前 32 字节
  *
- * 身份只保留 device_id / iid / cdid，仅存进程内存；不保存设备令牌、
- * Cookie 或完整响应。
+ * 身份只保存 device_id / iid / cdid 与注册时间，原子写入数据卷；
+ * 不保存设备令牌、Cookie 或完整响应。
  *
  * 缓存策略：成功结果进程内永久复用（身份不变）；失败结果只复用
  * RETRY_COOLDOWN_MS，冷却期过后下次调用会重新注册 —— 否则开机时网络
@@ -23,6 +23,33 @@
 const crypto = require('crypto');
 const zlib = require('zlib');
 const Http = require('../util/http');
+const fs = require('fs');
+const path = require('path');
+const Config = require('../util/config');
+
+function identityFile() {
+  return path.resolve(process.env.HONGGUO_DATA_DIR || Config.str('runtime.data_dir', '') || 'server', 'playback-device.json');
+}
+function readIdentity() {
+  try {
+    const value = JSON.parse(fs.readFileSync(identityFile(), 'utf8'));
+    const hours = Number(process.env.PLAYBACK_IDENTITY_TTL_HOURS || 720);
+    if (value.version !== 1 || !/^\d{1,30}$/.test(value.device_id) || !/[1-9]/.test(value.device_id) ||
+        !/^\d{1,30}$/.test(value.iid) || !/[1-9]/.test(value.iid) ||
+        !/^[a-f0-9-]{36}$/i.test(value.cdid) || !Number.isFinite(value.created_at) ||
+        Date.now() < value.created_at || Date.now() - value.created_at > (hours > 0 ? hours : 720) * 3600000) return null;
+    return Object.freeze(value);
+  } catch (_) { return null; }
+}
+function saveIdentity(value) {
+  const file = identityFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = file + '.tmp';
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(value), { mode: 0o600 });
+    fs.renameSync(tmp, file);
+  } finally { try { fs.unlinkSync(tmp); } catch (_) {} }
+}
 
 const REGISTER_URL = 'https://log5-applog-lf.fqnovel.com/service/2/device_register/'
   + '?tt_data=a&cronet_version=8d40f833_2026-03-03&ttnet_version=4.2.243.31-douyin'
@@ -97,6 +124,10 @@ function buildBody(now, cdid) {
  * 冷却结束后自动重新注册（无需重启应用）。
  */
 function getPlaybackDevice() {
+  if (registration === null) {
+    const saved = readIdentity();
+    if (saved) registration = Promise.resolve(saved);
+  }
   if (registration !== null) {
     if (failedAt === 0) return registration;
     if (Date.now() - failedAt < RETRY_COOLDOWN_MS) return registration;
@@ -137,7 +168,9 @@ function getPlaybackDevice() {
       const iid = j === null ? '' : responseId(j, 'install_id');
       const code = Number((j === null ? 0 : (j.code !== undefined ? j.code : j.Code)) || 0);
       if (deviceId === '' || iid === '' || code !== 0) throw new Error('无效的注册响应');
-      return Object.freeze({ device_id: deviceId, iid, cdid });
+      const identity = Object.freeze({ version: 1, device_id: deviceId, iid, cdid, created_at: now });
+      saveIdentity(identity);
+      return identity;
     } catch (e) {
       throw Object.assign(new Error('匿名播放设备注册失败，请稍后重试'), {
         code: 'DEVICE_REGISTRATION_FAILED', cause: e,
@@ -156,9 +189,10 @@ function getPlaybackDevice() {
  * 清空注册缓存。预热重试等场景显式调用，让下一次 getPlaybackDevice()
  * 真正重新发起注册（否则重试打的是同一个失败结果）。
  */
-function resetPlaybackDevice() {
+function resetPlaybackDevice({ forget = false } = {}) {
   registration = null;
   failedAt = 0;
+  if (forget) { try { fs.unlinkSync(identityFile()); } catch (_) {} }
 }
 
-module.exports = { getPlaybackDevice, resetPlaybackDevice };
+module.exports = { getPlaybackDevice, resetPlaybackDevice, isPersisted: () => readIdentity() !== null };

@@ -139,82 +139,66 @@ function normalizePosix(p) {
  * @param vid 集号（用于内联文件名）
  * @param filename 建议文件名（中文需 RFC 5987 编码）
  */
-async function streamFile(req, res, file, vid, filename) {
-  let size;
+async function streamFile(req, res, file, vid, filename, disposition = 'inline') {
+  const release = require('./cache-store').retain(file);
+  let fd;
   try {
-    size = (await fsp.stat(file)).size;
-  } catch (e) {
-    fail(req, res, 404, 'not found');
-    return;
-  }
-  const cd = 'inline; filename="' + vid + '.mp4"; filename*=UTF-8\'\''
-    + encodeURIComponent(String(filename));
-
-  const range = req.headers ? req.headers['range'] : null;
-  if (range !== null && range !== undefined && String(range).startsWith('bytes=')) {
-    const m = /bytes=(\d*)-(\d*)/.exec(range);
-    let start = 0;
-    let end = size - 1;
-    if (m) {
-      const gs = m[1];
-      const ge = m[2];
-      if (gs !== null && gs !== undefined && gs !== '') {
-        try { start = Number.parseInt(gs, 10); } catch (e) { start = 0; }
-        if (Number.isNaN(start)) start = 0;
-      }
-      if (ge !== null && ge !== undefined && ge !== '') {
-        try { end = Number.parseInt(ge, 10); } catch (e) { end = size - 1; }
-        if (Number.isNaN(end)) end = size - 1;
-      }
-    }
-    if (start < 0) start = 0;
-    if (end >= size) end = size - 1;
-    if (end < start) {
-      res.writeHead(416, { 'Content-Range': 'bytes */' + size });
+    fd = await fsp.open(file, 'r');
+    const size = (await fd.stat()).size;
+    const range = parseByteRange(req.headers && req.headers.range, size);
+    if (range === false) {
+      res.writeHead(416, { 'Content-Range': 'bytes */' + size, 'Content-Length': '0' });
       res.end();
       return;
     }
-    const len = end - start + 1;
-    const h = {};
-    h['Content-Type'] = 'video/mp4';
-    h['Content-Length'] = String(len);
-    h['Content-Range'] = 'bytes ' + start + '-' + end + '/' + size;
-    h['Accept-Ranges'] = 'bytes';
-    h['Content-Disposition'] = cd;
-    h['Access-Control-Allow-Origin'] = '*';
-    h['Access-Control-Expose-Headers'] = 'content-range, accept-ranges, content-length';
-    res.writeHead(206, h);
-    pipeRange(res, file, start, end);
-    return;
+    const start = range ? range.start : 0;
+    const end = range ? range.end : size - 1;
+    const headers = {
+      'Content-Type': 'video/mp4', 'Content-Length': String(Math.max(0, end - start + 1)),
+      'Accept-Ranges': 'bytes', 'Access-Control-Allow-Origin': '*',
+      'Content-Disposition': (disposition === 'attachment' ? 'attachment' : 'inline') + '; filename="media.mp4"; filename*=UTF-8\'\'' + encodeURIComponent(String(filename)),
+      'Access-Control-Expose-Headers': 'content-range, accept-ranges, content-length',
+    };
+    if (range) headers['Content-Range'] = 'bytes ' + start + '-' + end + '/' + size;
+    res.writeHead(range ? 206 : 200, headers);
+    if (req.method === 'HEAD' || size === 0) { res.end(); return; }
+    const stream = fd.createReadStream({ start, end, autoClose: false });
+    await new Promise((resolve, reject) => {
+      const closed = () => { stream.destroy(); resolve(); };
+      res.once('close', closed);
+      stream.once('error', reject);
+      res.once('finish', resolve);
+      stream.pipe(res);
+    });
+  } catch (e) {
+    if (res.headersSent) res.destroy();
+    else fail(req, res, e.code === 'ENOENT' ? 404 : 500, '媒体文件暂不可用');
+  } finally {
+    if (fd) await fd.close().catch(() => {});
+    release();
   }
-
-  const h = {};
-  h['Content-Type'] = 'video/mp4';
-  h['Content-Length'] = String(size);
-  h['Accept-Ranges'] = 'bytes';
-  h['Content-Disposition'] = cd;
-  h['Access-Control-Allow-Origin'] = '*';
-  h['Access-Control-Expose-Headers'] = 'content-range, accept-ranges, content-length';
-  res.writeHead(200, h);
-  if (size <= 0) {
-    res.end();
-    return;
-  }
-  pipeRange(res, file, 0, size - 1);
 }
 
-/** 把文件 [start, end] 字节区间写入响应流。 */
-function pipeRange(res, file, start, end) {
-  const rs = fs.createReadStream(file, { start, end });
-  rs.on('error', () => {
-    try { res.destroy(); } catch (e) { /* ignore */ }
-  });
-  rs.pipe(res);
+function parseByteRange(value, size) {
+  if (!value) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(value).trim());
+  if (!match || (!match[1] && !match[2]) || size <= 0) return false;
+  let start, end;
+  if (!match[1]) {
+    const suffix = Number(match[2]);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0) return false;
+    start = Math.max(0, size - suffix); end = size - 1;
+  } else {
+    start = Number(match[1]); end = match[2] ? Number(match[2]) : size - 1;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= size || end < start) return false;
+    end = Math.min(end, size - 1);
+  }
+  return { start, end };
 }
 
 module.exports = {
   send, json, headers, fail,
   isStaticPath, serveStatic, streamFile,
   // 以下为内部工具，导出便于自检/复用
-  MIME, FAVICON_SVG, extOf, normalizePosix,
+  MIME, FAVICON_SVG, extOf, normalizePosix, parseByteRange,
 };

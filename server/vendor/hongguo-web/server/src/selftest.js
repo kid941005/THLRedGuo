@@ -306,7 +306,7 @@ function cachePaths() {
   section('9. 播放缓存路径：.play.mp4 变体必须参与命中判定');
   const p = Stream.cachePaths('7688396322021329982', 'best');
   check('remux 产出名与 play 路径一致',
-    path.basename(p.play) === '7688396322021329982_best.play.mp4',
+    path.basename(p.play) === '7688396322021329982_v2_best.play.mp4',
     path.basename(p.play));
   check('play 与 out 是不同文件', p.play !== p.out, '');
   check('raw 命名带 .raw 段',
@@ -832,7 +832,8 @@ function searchPageSlice() {
   check('末页 nextSkip=75', p3.nextSkip === 75, '' + p3.nextSkip);
 
   const p4 = Client.Page.slice(all, 0, 30, false);
-  check('上游 has_more=false 时不谎报有更多', !p4.hasMore, '');
+  check('上游已结束但本地累计结果未展示完时仍有更多', p4.hasMore, '');
+  check('本地累计结果也展示完时没有更多', !Client.Page.slice(all, 60, 30, false).hasMore, '');
 
   const p5 = Client.Page.slice(all, 99, 30, true);
   check('skip 越界返回空列表', p5.items.length === 0, '' + p5.items.length);

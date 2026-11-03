@@ -1,4 +1,0 @@
-<resources>
-    <style name="LaunchTheme" parent="AppSystemBarTheme" />
-    <style name="NormalTheme" parent="AppSystemBarTheme" />
-</resources>

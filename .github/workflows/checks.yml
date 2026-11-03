@@ -1,41 +1,9 @@
-name: Static Checks
+name: Docker Checks
 
-# 提交与 PR 的机械关卡：语法 / 配置 / 密钥 / Dart 静态分析。
-# 与本地 pre-commit 钩子共用 tools/precommit_check.cjs，规则只有一份。
 on:
   push:
     branches: [main, master]
-    paths:
-      - 'lib/**'
-      - 'shared/**'
-      - 'assets/**'
-      - 'tools/**'
-      - 'server/**'
-      - 'packages/**'
-      - 'pubspec.yaml'
-      - 'pubspec.lock'
-      - 'analysis_options.yaml'
-      - 'docker-compose.yml'
-      - 'docker-compose.build.yml'
-      - '.dockerignore'
-      - '.githooks/**'
-      - '.github/workflows/checks.yml'
   pull_request:
-    paths:
-      - 'lib/**'
-      - 'shared/**'
-      - 'assets/**'
-      - 'tools/**'
-      - 'server/**'
-      - 'packages/**'
-      - 'pubspec.yaml'
-      - 'pubspec.lock'
-      - 'analysis_options.yaml'
-      - 'docker-compose.yml'
-      - 'docker-compose.build.yml'
-      - '.dockerignore'
-      - '.githooks/**'
-      - '.github/workflows/checks.yml'
   workflow_dispatch:
 
 permissions:
@@ -46,101 +14,58 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  repo-checks:
-    name: 语法 / 配置 / 密钥
+  node-checks:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Node
-        uses: actions/setup-node@v7
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
-      - name: Install pyyaml（YAML 校验用）
-        run: python3 -m pip install --quiet pyyaml || python3 -m pip install --quiet --break-system-packages pyyaml
-
-      - name: 全仓静态检查
-        run: node tools/precommit_check.cjs --all
-
-      - name: compose 配置可解析
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install YAML validator
+        run: python -m pip install pyyaml
+      - name: Install media test runtime
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: npm run check
+      - run: npm test
+      - run: npm run test:vendor
+      - name: Validate Compose
         run: |
           docker compose config -q
           docker compose -f docker-compose.yml -f docker-compose.build.yml config -q
 
-      - name: 数据源契约（可加载 + 四个方法齐全）
-        run: node tools/source_meta_check.cjs
-
-  flutter-analyze:
-    name: flutter analyze
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.47.9'
-          channel: stable
-          cache: true
-
-      - name: flutter pub get
-        run: flutter pub get
-
-      - name: flutter analyze
-        run: flutter analyze --no-pub
-
-      - name: flutter test
-        run: flutter test
-
   docker-build:
-    name: 镜像可构建且不含设备身份
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: 构建镜像（不推送）
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build image
         run: docker build -f server/Dockerfile -t thlredguo-gateway:ci .
-
-      - name: 断言镜像内容
+      - name: Check packaged runtime
         run: |
           docker run --rm --entrypoint sh thlredguo-gateway:ci -c '
             set -e
             test -f /app/server/gateway.js
-            test -f /app/server/lib/proxy.js
-            test -f /app/server/lib/upstream.js
             test -f /app/server/web/index.html
-            test -f /app/assets/sources/hongguo_gw.js
             test -f /app/server/vendor/hongguo-web/server/src/main.js
-            # 设备身份与运行期缓存绝不能进镜像（镜像会推到公开 GHCR）
+            test ! -d /app/assets
             test ! -f /app/server/vendor/hongguo-web/server/config/apikeys.json
             test ! -d /app/server/vendor/hongguo-web/server/stream-cache
-            echo "镜像内容检查通过"
+            test ! -f /app/server/vendor/hongguo-web/data/playback-device.json
+            ffmpeg -version >/dev/null
           '
-
-      - name: 容器可启动且健康检查转为通过
+      - name: Start container
+        run: docker run -d --init --name gw-ci -p 127.0.0.1:8080:8080 thlredguo-gateway:ci
+      - name: Check web and internal API
+        run: node tools/container_smoke.cjs http://127.0.0.1:8080
+      - name: Verify media pipeline inside Alpine image
+        run: docker run --rm --init --entrypoint node -v "$PWD/tests:/app/tests:ro" thlredguo-gateway:ci --test /app/tests/runtime.test.cjs /app/tests/media.test.cjs /app/tests/api.test.cjs /app/tests/application.test.cjs /app/tests/supervisor.test.cjs /app/tests/web.test.cjs /app/tests/gateway.test.cjs /app/tests/ffmpeg.test.cjs
+      - name: Logs and cleanup
+        if: always()
         run: |
-          docker run -d --name gw-ci -p 8080:8080 thlredguo-gateway:ci
-          ok=0
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8080/healthz > /tmp/health.json 2>/dev/null; then
-              echo "第 ${i} 次探测通过"
-              ok=1
-              break
-            fi
-            sleep 2
-          done
-          echo "--- 根路径应返回网页界面"
-          curl -fsS http://127.0.0.1:8080/ | head -3
-          curl -fsS http://127.0.0.1:8080/ | grep -qi "<!doctype html" || { echo "根路径不是 HTML"; exit 1; }
-          curl -fsS http://127.0.0.1:8080/api | grep -q '"service"' || { echo "/api 未返回端点清单"; exit 1; }
-          docker logs gw-ci | tail -20
-          docker rm -f gw-ci >/dev/null 2>&1 || true
-          if [ "$ok" != "1" ]; then
-            echo "容器在 60 秒内未就绪"
-            exit 1
-          fi
-          cat /tmp/health.json
+          docker logs gw-ci || true
+          docker rm -f gw-ci || true

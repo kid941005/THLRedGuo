@@ -674,7 +674,7 @@ async function appSearchPage(query, limit, skipN) {
     // 注意：hasMore 初值为 false，不能在首轮就用它判断退出，
     // 否则第一页都抓不到（搜索恒返回 0 条）。首次无条件抓一轮。
     if (results.length >= want) break;
-    if (page > 0 && !hasMore) break;
+    if ((page > 0 || Array.isArray(cachedAcc)) && !hasMore) break;
     const q = Json.obj();
     q.query = query;
     q.tab_name = 'feed';
@@ -1015,9 +1015,9 @@ async function rankPage(board, limit, offsetArg) {
     if (!hasMore) break;
   }
 
-  const out = results.slice(0, Math.min(limit1, results.length));
-  // 结果放满说明可能还有后续页；否则上游已明确没有
-  const more = hasMore && out.length >= limit1;
+  // The upstream cursor covers the whole returned batch; keep every item in that batch.
+  const out = results;
+  const more = hasMore && out.length > 0;
   Safeguards.cacheSet(ck, [out, more, cur], 1800);
   return new RankPage(out, more, cur);
 }
@@ -1056,7 +1056,7 @@ class Page {
     const from = Math.min(skipN, size);
     const to = Math.min(skipN + lim, size);
     const out = (all === null || all === undefined) ? [] : all.slice(from, to);
-    const more = out.length >= lim && upstreamHasMore;
+    const more = to < size || (out.length >= lim && upstreamHasMore);
     return new Page(out, more, skipN + out.length);
   }
 }
@@ -1086,7 +1086,7 @@ async function latestPage(genre, onlyToday, maxItems, refresh, seenIds, skip) {
   const paged = skip > 0 || (seenIds !== null && seenIds !== undefined && seenIds.length > 0);
   if (!refresh && !paged) {
     const c = Safeguards.cacheGet(ck);
-    if (c !== null) return new Page(c, true, 0);
+    if (c && !Array.isArray(c) && Array.isArray(c.items)) return new Page(c.items, c.hasMore, c.nextSkip);
   }
 
   const out = [];
@@ -1098,18 +1098,19 @@ async function latestPage(genre, onlyToday, maxItems, refresh, seenIds, skip) {
   let hasMore = false;
 
   for (let pages = 0; pages < 20 && out.length < maxItems; pages++) {
-    const body = landpageBody(shown, scene, offset, 18, onlineTime, g);
+    const body = landpageBody(shown, scene, offset, Math.min(18, maxItems - out.length), onlineTime, g);
     const j = await api('POST', '/reading/distribution/category/landpage/v',
       body, null, 3, SIGN_LIST);
     const data = Json.optObj(j.data);
     const items = data === null ? [] : Json.optArr(data.video_data);
-    if (items.length === 0) break;
+    if (items.length === 0) { hasMore = false; break; }
 
     let pageToday = 0;
     for (const itObj of items) {
       const it = Json.optObj(itObj);
       if (it === null) continue;
       const sid = String(it.series_id);
+      if (shown.includes(sid)) continue;
       shown.push(sid);
 
       const subs = [];
@@ -1147,17 +1148,15 @@ async function latestPage(genre, onlyToday, maxItems, refresh, seenIds, skip) {
       row.abstract = strip(str(it, 'video_desc'), 50);
       row.vid = str(it, 'vid');
       out.push(row);
-      if (out.length >= maxItems) break;
     }
-    if (wantToday && pageToday === 0) break; // 整页无今日 => 已过今日簇
-    hasMore = data !== null && data.has_more !== false;
-    if (!hasMore) break;
     offset += items.length;
+    if (wantToday && pageToday === 0) { hasMore = false; break; }
+    hasMore = data.has_more !== false;
+    if (!hasMore) break;
   }
-  if (out.length >= maxItems && out.length > skip) {
-    Safeguards.cacheSet(ck, out, 600);
-  }
-  return new Page(out, hasMore, skip + out.length);
+  const page = new Page(out, hasMore && out.length > 0, offset);
+  if (!paged) Safeguards.cacheSet(ck, { items: out, hasMore: page.hasMore, nextSkip: offset }, 600);
+  return page;
 }
 
 /** landpage 接口请求体。 */
@@ -1265,7 +1264,7 @@ async function browsePage(genre, opts, seenIds, skip) {
     throw new Error('genre 必须是 ' + Object.keys(GENRES).join('|'));
   }
   if (opts === null || opts === undefined) opts = {};
-  const maxItems = Math.min(Json.optInt(opts.limit, 60), 120);
+  const maxItems = Math.max(1, Math.min(Json.optInt(opts.limit, 60), 120));
 
   const select = Json.obj();
   select.genre = [gv[1]];
@@ -1290,7 +1289,7 @@ async function browsePage(genre, opts, seenIds, skip) {
     body.req_scene = gv[0];
     body.offset = offset;
     body.need_selector_panel = false;
-    body.limit = 18;
+    body.limit = Math.min(18, maxItems - out.length);
     body.select_items = select;
     body.session_id = '';
     body.req_type = 'only_content';
@@ -1300,12 +1299,13 @@ async function browsePage(genre, opts, seenIds, skip) {
       body, null, 3, SIGN_LIST);
     const data = Json.optObj(j.data);
     const items = data === null ? [] : Json.optArr(data.video_data);
-    if (items.length === 0) break;
+    if (items.length === 0) { hasMore = false; break; }
 
     for (const itObj of items) {
       const it = Json.optObj(itObj);
       if (it === null) continue;
       const sid = String(it.series_id);
+      if (shown.includes(sid)) continue;
       shown.push(sid);
 
       const row = Json.obj();
@@ -1324,15 +1324,15 @@ async function browsePage(genre, opts, seenIds, skip) {
       row.duration = num(it, 'duration');
       row.horiz_cover = str(it, 'horiz_cover');
       out.push(row);
-      if (out.length >= maxItems) break;
     }
     // 上方 items.isEmpty() 已拦截 data == null，此处 data 必非空。
     // 上游只在下页无内容时才给出 has_more=false，故按其值决定是否继续。
-    if (data.has_more === false) break;
-    hasMore = true;
-    offset += items.length;
+    const next = Number(data.next_offset ?? data.offset ?? offset + items.length);
+    offset = Number.isFinite(next) && next > offset ? next : offset + items.length;
+    hasMore = data.has_more !== false;
+    if (!hasMore) break;
   }
-  return new Page(out, hasMore, skip + out.length);
+  return new Page(out, hasMore && out.length > 0, offset);
 }
 
 // ==================== 工具 ====================

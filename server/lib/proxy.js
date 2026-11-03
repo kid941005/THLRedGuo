@@ -19,74 +19,84 @@ const PASS_HEADERS = [
   'cache-control',
   'last-modified',
   'content-encoding',
+  'content-disposition',
 ];
 
-function proxy(req, res, subPath) {
-  const headers = { ...req.headers };
-  delete headers.host;
-  delete headers.connection;
-  delete headers['content-length'];
-  // 不向上游要压缩：代理是字节透传，避免解压/编码头不一致
-  delete headers['accept-encoding'];
+function createProxy({ upstreamUrl = UPSTREAM, provider = upstream, timeoutMs = 180000 } = {}) {
+  function proxy(req, res, subPath) {
+    const headers = { ...req.headers };
+    delete headers.host;
+    delete headers.connection;
+    delete headers['content-length'];
+    // 不向上游要压缩：代理是字节透传，避免解压/编码头不一致
+    delete headers['accept-encoding'];
+    delete headers.authorization;
+    delete headers.cookie;
+    delete headers['x-api-key'];
 
-  const key = upstream.getKey();
-  if (key) headers['x-api-key'] = key;
+    const key = provider.getKey();
+    if (key) headers['x-api-key'] = key;
 
-  const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-  const upstreamReq = http.request(
-    `${UPSTREAM}${subPath}${query}`,
-    { method: req.method, headers, timeout: 120000 },
-    (upstreamRes) => {
-      // 密钥失效时先刷新再重放，必须发生在 writeHead 之前
-      const canRetry =
-        (req.method === 'GET' || req.method === 'HEAD') && !req.__keyRetried;
-      if (upstreamRes.statusCode === 401 && canRetry) {
-        req.__keyRetried = true;
-        upstreamRes.resume();
-        upstream
-          .ensureKey(true)
-          .then(() => proxy(req, res, subPath))
-          .catch(() => {
-            if (!res.headersSent) {
-              sendJson(res, 502, { error: 'API_KEY_REFRESH_FAILED' });
-            } else {
-              res.destroy();
-            }
-          });
-        return;
+    const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+    const upstreamReq = http.request(
+      `${upstreamUrl}${subPath}${query}`,
+      { method: req.method, headers, timeout: timeoutMs },
+      (upstreamRes) => {
+        // 密钥失效时先刷新再重放，必须发生在 writeHead 之前
+        const canRetry =
+          (req.method === 'GET' || req.method === 'HEAD') && !req.__keyRetried;
+        if (upstreamRes.statusCode === 401 && canRetry) {
+          req.__keyRetried = true;
+          upstreamRes.resume();
+          provider
+            .ensureKey(true)
+            .then(() => proxy(req, res, subPath))
+            .catch(() => {
+              if (!res.headersSent) {
+                sendJson(res, 502, { error: 'API_KEY_REFRESH_FAILED' });
+              } else {
+                res.destroy();
+              }
+            });
+          return;
+        }
+
+        const outHeaders = {};
+        upstreamRes.on('error', () => res.destroy());
+        upstreamRes.on('aborted', () => res.destroy());
+        for (const name of PASS_HEADERS) {
+          if (upstreamRes.headers[name]) outHeaders[name] = upstreamRes.headers[name];
+        }
+        res.writeHead(upstreamRes.statusCode || 502, outHeaders);
+        upstreamRes.pipe(res);
       }
+    );
 
-      const outHeaders = {};
-      for (const name of PASS_HEADERS) {
-        if (upstreamRes.headers[name]) outHeaders[name] = upstreamRes.headers[name];
+    upstreamReq.on('timeout', () => {
+      upstreamReq.destroy(new Error('upstream timeout'));
+    });
+    upstreamReq.on('error', (e) => {
+      if (!res.headersSent) {
+        sendJson(res, 502, { error: 'UPSTREAM_UNAVAILABLE', detail: e.message });
+      } else {
+        res.destroy();
       }
-      res.writeHead(upstreamRes.statusCode || 502, outHeaders);
-      upstreamRes.pipe(res);
-    }
-  );
+    });
+    // 播放器拖动进度 / 切集时会主动断开，及时释放上游连接
+    res.on('close', () => {
+      if (!res.writableEnded) upstreamReq.destroy();
+    });
 
-  upstreamReq.on('timeout', () => {
-    upstreamReq.destroy(new Error('upstream timeout'));
-  });
-  upstreamReq.on('error', (e) => {
-    if (!res.headersSent) {
-      sendJson(res, 502, { error: 'UPSTREAM_UNAVAILABLE', detail: e.message });
+    // GET / HEAD 没有请求体：直接 end。401 重试时 req 已经读完，
+    // 再对它 pipe 属于未定义行为，可能让上游请求一直不结束，只能等 代理超时。
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      upstreamReq.end();
     } else {
-      res.destroy();
+      req.pipe(upstreamReq);
     }
-  });
-  // 播放器拖动进度 / 切集时会主动断开，及时释放上游连接
-  res.on('close', () => {
-    if (!res.writableEnded) upstreamReq.destroy();
-  });
-
-  // GET / HEAD 没有请求体：直接 end。401 重试时 req 已经读完，
-  // 再对它 pipe 属于未定义行为，可能让上游请求一直不结束，只能等 120s 超时。
-  if (req.method === 'GET' || req.method === 'HEAD') {
-    upstreamReq.end();
-  } else {
-    req.pipe(upstreamReq);
   }
-}
 
-module.exports = { proxy };
+  return proxy;
+}
+const proxy = createProxy();
+module.exports = { proxy, createProxy };

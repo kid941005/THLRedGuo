@@ -1,242 +1,144 @@
-# 糖葫芦Haw (THLRedLook)
+# THLRedGuo · Docker 网页版
 
-<p align="left">
-  <a href="https://github.com/never88gone/THLRedGuo/stargazers"><img src="https://img.shields.io/github/stars/never88gone/THLRedGuo?style=flat-square&logo=github&color=e02424" alt="GitHub Stars" /></a>
-  <a href="https://github.com/never88gone/THLRedGuo/network/members"><img src="https://img.shields.io/github/forks/never88gone/THLRedGuo?style=flat-square&logo=github" alt="GitHub Forks" /></a>
-  <img src="https://img.shields.io/badge/Platform-Android%20%7C%20iOS%20%7C%20tvOS%20%7C%20Windows%20%7C%20macOS-blue?style=flat-square" alt="Supported Platforms" />
-  <a href="https://flutter.dev"><img src="https://img.shields.io/badge/Flutter-3.44+-02569B?style=flat-square&logo=flutter&logoColor=white" alt="Flutter SDK" /></a>
-  <a href="https://testflight.apple.com/join/rkvvdp7J"><img src="https://img.shields.io/badge/TestFlight-Public%20Beta-black?style=flat-square&logo=apple" alt="Apple TestFlight" /></a>
-  <a href="https://t.me/tanghulutvos"><img src="https://img.shields.io/badge/Telegram-Group-26A5E4?style=flat-square&logo=telegram&logoColor=white" alt="Telegram Group" /></a>
-</p>
+项目仅维护 Docker 网页版。使用浏览器登录后，可浏览搜索、收藏追剧、观看历史、断点续播、自动连播、批量下载，并通过管理后台维护账号与任务。
 
-> ⚠️ **免责声明 (Disclaimer)**：
-> 1. **仅供学习研究**：本项目仅供编程技术交流、Flutter 跨平台与 Apple tvOS 原生应用架构研究使用，严禁用于任何商业牟利或侵权用途；
-> 2. **纯客户端工具，无内容存储**：本项目为纯本地端侧播放器工具，无需注册登录即可直接使用；开发者不搭建、不运营任何流媒体服务器，不提供、不存储、不分发任何音视频资源；
-> 3. **网络数据版权归属**：应用中所有可访问的数据源均来源于第三方网络公开平台，其版权与知识产权均归原版权方所有，请自觉支持正版内容；
-> 4. **责任限制**：用户使用本软件及自配数据源产生的一切法律责任及版权纠纷均由使用者自行承担，与本项目及其代码贡献者无关。
+## 已实现功能
 
-**糖葫芦Haw**（工程标识：`THLRedLook`，包名 / Application ID：`com.never88gone.redlook`）是一款基于 **Flutter + Apple tvOS 原生** 打造的全平台独立流媒体与短剧聚合应用。
+| 功能 | 使用方式 |
+| --- | --- |
+| 用户账号 | 首次初始化管理员，管理员创建普通用户或其他管理员；支持改密和退出 |
+| 收藏追剧 | 剧集详情设置想看、在看或已看完，在“我的追剧”查看 |
+| 观看历史 | 播放后按账号保存剧集、分集和进度，支持单条删除与清空 |
+| 断点续播 | 同一账号跨浏览器恢复进度；点“继续观看”回到最近一集 |
+| 自动连播 | 播放结束后进入下一集，可按账号关闭 |
+| 网页批量下载 | 每批最多选择 200 集，后台排队处理，支持取消、失败重试和重启恢复 |
+| 保存文件 | 完成后保存单集，或选择最多 100 集合并 ZIP（单个 ZIP 小于 4GB） |
+| 管理后台 | 用户创建、角色调整、停用/启用、密码重置、全站下载任务和操作记录 |
 
-应用内无需注册账号或登录。iOS 与 tvOS 使用官方数据源前，需要在本机导入兼容的红果官方 APK。数据解析、高清播放、弹幕呈现与离线下载均在设备本地完成，无需搭建远程中转或中心化代理服务。
+## 快速部署
 
-## iOS 与 tvOS 本机播放配置
-
-应用不附带 APK 或其签名配置。请自行取得未经修改的红果官方 APK，目前支持 `7.4.3.32` 中的兼容 SDK。
-
-- **iOS / iPadOS**：进入「设置 → JS 数据源插件管理 → 导入官方 APK」，从“文件”中选择安装包。
-- **tvOS**：进入「设置 → 站源管理 → 手机导入官方 APK」，手机与电视连接同一局域网，扫描二维码后选择安装包，成功后返回播放。关闭导入页后，上传地址立即失效。
-
-导入会校验官方签名和文件完整性。播放配置仅保存于当前设备的钥匙串，不同步至 iCloud、不随设备迁移，也不写入诊断日志；更换设备需要分别导入。应用不执行 APK，也不读取 Android 的运行时 Cookie 或登录信息。导入过程中产生的临时 APK 会在处理后清理。
-
----
-
-## 📲 官方公测与交流反馈
-
-- **🍏 Apple TestFlight 官方公测**：[立即加入 TestFlight 公测 (iOS / iPadOS / tvOS)](https://testflight.apple.com/join/rkvvdp7J)
-  > 覆盖 iOS (iPhone / iPad) 与 Apple tvOS 客厅大屏版，点击链接即可通过苹果官方 TestFlight 一键安装并接收版本更新。
-- **💬 Telegram 官方交流与反馈**：[https://t.me/tanghulutvos](https://t.me/tanghulutvos) （频道 / 群组：`@tanghulutvos`）
-  > 欢迎加入 Telegram 官方交流群获取最新动态、交流反馈与建议。
-
----
-
-## 界面预览
-
-### 🖥️ 桌面端宽屏与分栏视窗 (Windows / macOS)
-
-| 桌面端宽屏分栏全景 | 桌面端高清播放与选集 |
-| :---: | :---: |
-| <img src="assets/screenshots/desktop_overview.png" width="440" alt="桌面端全景" /> | <img src="assets/screenshots/desktop_player.png" width="440" alt="桌面端播放器" /> |
-
-### 📱 移动端核心观影体验 (iOS / Android)
-
-| 首页发现与分类 | 搜索与关键词联想 | 热播短剧排行榜 |
-| :---: | :---: | :---: |
-| <img src="assets/screenshots/mobile_home.png" width="180" alt="首页发现" /> | <img src="assets/screenshots/mobile_search.png" width="180" alt="搜索联想" /> | <img src="assets/screenshots/mobile_rankings.png" width="180" alt="短剧榜单" /> |
-
-| 剧集详情与选集 | 竖屏沉浸式播放 | 横屏全屏影院模式 |
-| :---: | :---: | :---: |
-| <img src="assets/screenshots/mobile_detail.png" width="180" alt="剧集详情" /> | <img src="assets/screenshots/mobile_player_portrait.png" width="180" alt="竖屏播放" /> | <img src="assets/screenshots/mobile_player_fullscreen.png" width="260" alt="横屏播放" /> |
-
-### 🗂️ 追剧、历史、离线缓存与插件管理
-
-| 我的追剧收藏 | 最近观看 | 离线下载管理 | JS 数据源插件管理 |
-| :---: | :---: | :---: | :---: |
-| <img src="assets/screenshots/mobile_follow.png" width="150" alt="我的追剧" /> | <img src="assets/screenshots/mobile_history.png" width="150" alt="最近观看" /> | <img src="assets/screenshots/mobile_downloads.png" width="150" alt="离线下载" /> | <img src="assets/screenshots/mobile_js_sources.png" width="150" alt="JS数据源管理" /> |
-
-### 🔒 隐私安全与私密保险箱
-
-| 九宫格手势锁 | 隐私模式与私密设置 | 独立私密短剧库 |
-| :---: | :---: | :---: |
-| <img src="assets/screenshots/privacy_lock.png" width="180" alt="九宫格手势锁" /> | <img src="assets/screenshots/privacy_settings.png" width="180" alt="隐私设置" /> | <img src="assets/screenshots/privacy_vault.png" width="180" alt="私密短剧库" /> |
-
-### 📺 Apple tvOS 客厅大屏原生端
-
-| tvOS 首页瀑布流 | tvOS 剧集详情与选集 |
-| :---: | :---: |
-| <img src="assets/screenshots/tvos_home.png" width="380" alt="tvOS首页" /> | <img src="assets/screenshots/tvos_detail.png" width="380" alt="tvOS详情" /> |
-
-| tvOS 热播排行榜 | tvOS 全屏播放与控制层 |
-| :---: | :---: |
-| <img src="assets/screenshots/tvos_rankings.png" width="380" alt="tvOS榜单" /> | <img src="assets/screenshots/tvos_player.png" width="380" alt="tvOS播放器" /> |
-
----
-
-## 平台支持矩阵
-
-应用深度适配移动端、桌面端与客厅大屏，覆盖以下操作系统与形态：
-
-| 平台 | 形态与特性 | 构建与交付产物 |
-| :--- | :--- | :--- |
-| **Android** | 适配手机、折叠屏与老旧设备，兼容 Android 7.1+（API 25+），支持竖屏短剧滑动手势、画中画（PiP）浮窗、arm64-v8a / armeabi-v7a / x86_64 三架构 | 原生 Flutter + NDK 编译，输出 APK / AAB |
-| **Android TV** | 自动识别大屏电视模式，锁定横屏影院布局，完整适配遥控器方向键与焦点移动 | 共用 Flutter 源码，自适应电视 UI 布局 |
-| **iOS** | 适配 iPhone / iPad，原生画中画（PiP）小窗播放与后台接续、深色模式自适应、原生手势返回与低功耗下载 | Xcode 编译签名，输出 IPA 归档；支持 [Apple TestFlight](https://testflight.apple.com/join/rkvvdp7J) 一键安装 |
-| **macOS** | 桌面端大屏响应式三栏/分栏布局，键盘方向键与快捷键全面支持 | macOS App / PKG 安装包 |
-| **Windows** | 基于 `media_kit` / libmpv 硬件解码，集成专属 Shader 画质增强滤镜 | 独立免安装绿色包 / 便携目录（含完整 DLL 与运行环境） |
-| **Apple tvOS** | 独立原生工程（`tvos/`），纯 SwiftUI + Siri Remote 焦点引擎 + AVKit 原生渲染打造，具备完整客厅大屏交互与原生影院体验 | 独立 Xcode 工程，输出 tvOS IPA；支持 [Apple TestFlight](https://testflight.apple.com/join/rkvvdp7J) 一键安装 |
-
----
-
-## 核心功能介绍
-
-### 📺 首页探索与热播排行
-- **发现页（Flutter / tvOS）**：直接读取红果手机 App「找剧」的全部、真人剧、漫剧、AI剧分类与数据；瀑布流滚动自动加载下一页，失败后可重试；
-- **手机版短剧榜单**：读取手机 App 返回的总榜与真人剧、漫剧、AI 剧分类榜，保留官方排序和指标。
-
-### 🔍 智能搜索与联想
-- **手机版搜索与联想**：使用红果手机 App 搜索接口，支持游标分页；空输入展示官方“猜你想搜”，输入关键字展示官方搜索联想；
-- **本地搜索历史**：自动记录搜索词，支持一键点击历史词快捷重新检索或清理历史。
-
-### 🎬 剧集详情与系列多季
-- **海报大图与高清全屏预览**：剧集海报呈现放大至舒适比例，支持点击海报调起全屏查看与双指缩放；
-- **紧凑布局与多状态追剧**：标签移至海报右侧紧凑对齐，支持「想看 / 在看 / 已看」多档追剧状态底部弹窗管理；
-- **防眩光沉浸对比度**：采用多重深度渐变遮罩与独立半透明底衬，彻底消除背景海报高光对剧情简介和播放量的眩光干扰；
-- **系列多季聚拢展示**：优先使用官方系列剧接口按官方季号展示与切换，未上线季智能标识，接口不可用时平滑回退搜索关联。
-
-### ⚡ 影院级视听与播放控制
-- **系统级画中画 (PiP) 浮窗观影**：支持 iOS 与 Android 系统级原生画中画小窗播放，切出应用不中断观影，点击浮窗秒级还原跳转回播放器页面；
-- **沉浸式视频流推荐与无限翻页**：满宽贴底进度条直达屏幕边缘，去除多余按钮与翻页阻断，支持上下滑动平滑无限轮转切剧；
-- **iOS/tvOS 加密短剧流式播放**：支持边加载边解密、平滑拖拽与连续切集；短暂分段请求失败自动重试，播放中断时保留进度恢复，并可导出故障诊断；
-- **完整分集取流**：通过官方 App 接口解析完整分集，不将网页公共试看视频作为在线播放兜底；未取得完整片源时保留真实错误供重试和诊断。
-- **清晰度智能与手动切换**：默认优先播放可用的 1080P，片源不可用时回退到其他实际档位；清晰度菜单显示当前分集返回的档位，手动切换保留播放进度；
-- **实时弹幕互动**：弹幕随播放时间轴滚动渲染，支持在播放菜单中随时开启或关闭弹幕；
-- **多种播放手势与偏好**：
-  - **手机竖屏**：手指上下滑动快速换集，长按屏幕任意位置触发 3 倍速快进，轻点启停；
-  - **横屏模式**：屏幕左侧上下滑动调节亮度，右侧上下滑动调节音量，左右滑动快进/后退；
-  - **连播与预热**：支持在播放菜单中自由开启或关闭“自动连播”；开启下一集预加载，片尾秒开切集；
-- **统一全景选集浮层**：弹出浮层支持多季切换、正序/倒序排列与完整平滑滚动，横屏播放下选集顺畅不遮挡。
-
-### 🗂️ 我的追剧与播放历史
-- **一键追剧收藏**：在详情页或播放器中点击“加入追剧”即可收藏，方便随时回看；
-- **精准断点续播**：自动记录每部短剧的观看集数与秒级进度，下次打开即刻无缝续播；
-- **播放历史管理**：提供独立的“最近观看”页面，支持单条滑动删除或一键清空历史记录。
-
-### 📥 离线缓存与分集下载
-- **分集多选批量下载**：在短剧详情页支持批量勾选剧集并一键加入下载队列；
-- **断点续传与离线播放**：下载过程网络波动自动恢复断点，下载完成后无需网络流量即可离线完整观看；
-- **下载常亮防息屏**：提供下载时屏幕常亮开关，防止设备息屏导致批量下载挂起。
-
-### 🔒 隐私安全与私密空间
-- **九宫格图形手势锁**：支持在设置中开启九宫格锁屏密码，应用切至后台自动加锁防窥；
-- **多任务防窥虚化**：切换应用或打开多任务栏时，画面自动触发高斯模糊遮罩；
-- **独立私密短剧空间**：提供独立加密的私密空间，私密剧集与专属记录独立存放，不进入常规播放列表。
-
-### ⚙️ 数据源管理与网络诊断
-- **数据源插件管理**：在设置页面可查看当前已启用的数据源，支持长按或点击删除自定义数据源并带有二次确认；
-- **tvOS 数据源版本核对**：设置 → 站源管理显示应用构建号、内置 JS 指纹与运行一致性；完整诊断日志包含源提交和各运行上下文指纹，便于确认安装包和实际执行的 JS。
-- **tvOS 游客会话恢复**：官方请求独立管理游客身份，不自动混用系统 Cookie；确认缓存会话异常后受限恢复，持续拒绝时保留真实错误，不影响收藏和历史。
-- **网络状态一键诊断**：设置页提供网络检测与诊断工具，可查看与当前数据源的网络连接状态并一键复制完整脱敏排查报告。
-- **出口 IP 与地区**：数据源诊断页及导出报告显示查询服务看到的出口 IP、估算归属地区、来源和检测时间。查询使用 IP.SB / IPWho.is，不读取 GPS；代理分流时可能与红果接口的出口不同，归属地区不能单独证明风控原因。
-- **诊断日志导出**：Flutter 支持导出完整脱敏文本日志，iOS 可通过系统分享面板存储到“文件”或手动反馈。tvOS 可由同一局域网内的手机扫码复制或下载日志，关闭二维码页面后链接失效，最长有效 10 分钟。日志不会自动上传。
-
----
-
-## 目录结构概览
-
-```
-THLRedLook
-├── lib/                   # Flutter 跨平台业务逻辑、页面 UI、播放器控制器与端侧调度
-├── android/               # Android 原生平台工程与清单配置
-├── ios/                   # iOS 原生平台工程、Podfile 与签名配置
-├── macos/                 # macOS 桌面端平台工程与权限配置
-├── windows/               # Windows 桌面端 Runner 与 CMake 构建系统
-├── tvos/                  # Apple tvOS 原生独立工程（SwiftUI + AVKit + Focus Engine）
-├── server/                # 可选：自建 Docker 网关（服务端签名/取流）与数据源下发
-├── tools/                 # 数据源冒烟工具（脱离 App 验证 home/category/detail/play）
-└── .github/ci/            # 构建、打包、官方 JS 校验与 TestFlight 工具
-```
-
----
-
-## 开发与本地构建
-
-### 环境准备
-- **Flutter SDK**：3.44.x+（推荐使用 `fvm`）
-- **Python**：3.10+（用于运行工程工具链脚本）
-- **平台依赖**：
-  - Android：JDK 17+、Android SDK 36
-  - iOS / macOS / tvOS：macOS 系统、Xcode 16+、CocoaPods
-  - Windows：Visual Studio 2022 C++ 桌面开发套件
-
-### 运行与调试
-本项目零服务器配置依赖，一键拉取依赖即可运行：
+在仓库根目录执行：
 
 ```bash
-# 获取 Flutter 依赖
-flutter pub get
-
-# 启动本地调试（全平台支持）
-flutter run
+docker compose pull
+docker compose up -d
 ```
 
-### 提交前自检
-
-钩子与 CI 共用同一套规则（`tools/precommit_check.cjs`，零第三方依赖）。克隆仓库后启用一次：
+本机打开 [http://127.0.0.1:8080/](http://127.0.0.1:8080/)。首次启动稍等片刻，可通过以下命令检查：
 
 ```bash
-bash tools/install-hooks.sh      # 等价于 git config core.hooksPath .githooks
+docker compose ps
+docker compose logs --tail=100 gateway
+curl -fsS http://127.0.0.1:8080/healthz
 ```
 
-钩子只做秒级检查：合并冲突标记、敏感文件名（`apikeys.json` / `.env` / 私钥）、密钥字符串、
-JS 语法、JSON 与 YAML 解析、超大文件；改动 `assets/sources/*.js` 时额外跑数据源契约检查。
-Dart 静态分析太慢，钩子只提示、不执行。
-
-手动跑全仓（与 CI 一致）：
+默认端口只向宿主机开放。NAS 或局域网中的其他设备访问时，先复制配置：
 
 ```bash
-node tools/precommit_check.cjs --all
-node tools/source_meta_check.cjs   # 数据源可加载，且 home/category/detail/play 齐全
-flutter analyze
-flutter test                       # 纯逻辑单测（跨源去重、互备表）
+cp .env.example .env
 ```
 
-`.github/workflows/checks.yml` 在 push 与 PR 时执行同样的检查，Dart 分析单独一个 job。
-CI 与本地共用规则的好处是：本地过了、CI 不会因为另一套规则再挂一次。
+将 .env 中的 GW_BIND 改为 0.0.0.0，按需修改 GW_PORT，再执行 docker compose up -d。随后打开 http://服务器局域网IP:端口/。
 
-### 构建与发布
+剧库、媒体、个人数据与下载接口均要求登录，普通用户只能查看自己的数据。公网使用 HTTPS 反向代理，将 /、/api/*、/gw/* 转发到同一来源的根路径；设置 PUBLIC_ORIGIN=https://你的域名 和 COOKIE_SECURE=1。局域网 HTTP 使用默认 COOKIE_SECURE=0。
 
-仓库保留的最小工具链位于 `.github/ci/`，CI 和本地打包使用相同入口：
+## 首次创建管理员
+
+服务首次启动会在数据卷生成初始化口令。读取它：
 
 ```bash
-python3 .github/ci/build_android.py
-python3 .github/ci/build_windows.py
-python3 .github/ci/build_ios.py
-python3 .github/ci/build_macos.py
-python3 .github/ci/build_tvos.py
+docker compose exec gateway cat /app/data/setup-token
 ```
 
-Apple 平台的签名打包使用 `--export-options` 指定对应的 ExportOptions.plist；tvOS 归档另加 `--package`。tvOS 本地调试先在 `tvos/` 运行 `pod install`，再打开 `THLRedLook.xcworkspace`，选择 Apple TV 模拟器运行。
+打开网页，填写用户名、至少十位密码和初始化口令，创建管理员后自动登录。口令文件随即删除，后续账号由“管理后台”创建，不开放游客注册。也可以在首次启动前通过 .env 的 SETUP_TOKEN 指定自己的初始化口令；它不作为登录密码，也不会覆盖现有管理员。
 
-应用版本保持 `1.0.0`。Apple 平台 CI 自动打包并上传 TestFlight；tvOS 公开组分发仅由手动工作流明确勾选 `publish_public` 触发。
+Cookie 会话默认有效七天。修改密码、管理员重置密码或停用账号后，已有会话失效。账号密码使用带随机盐的 scrypt 散列保存；不要删除数据卷来尝试重置一个账号，否则所有用户和下载也会丢失。
 
----
+## 从当前源码构建
 
-## 📈 Star 历史趋势 (Star History)
+本地源码修改后使用：
 
-<a href="https://star-history.com/#never88gone/THLRedGuo&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=never88gone/THLRedGuo&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=never88gone/THLRedGuo&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=never88gone/THLRedGuo&type=Date" />
- </picture>
-</a>
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
 
+覆盖文件使用 :dev 镜像标签。普通 docker compose up -d 使用 GHCR 已发布镜像，不包含尚未发布的本地修改。
+
+## 更新与持久化
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+数据卷 thlredguo-gateway-data 挂载到 /app/data，存放 app.sqlite（账号、会话、收藏、历史、进度、下载任务）、downloads/（下载成品）、目录身份、内部密钥、播放注册身份和媒体缓存。升级保留该卷；docker compose down 默认保留数据，添加 -v 会删除数据。
+
+备份时先停止容器，再备份整个数据卷，恢复时也使用整个卷，包含 SQLite 的关联文件。当前应用按单个容器实例设计，不应让多个副本共享同一数据库与任务目录。
+
+两类身份均原子写入数据卷，重建容器后复用。播放身份默认有效期 30 天；过期或存储损坏后重新注册。健康检查分别返回 device_persisted 和 playback_device_persisted，后者在首次成功准备媒体后变为 true。
+
+点击分集后，网页先轮询准备状态，下载、解密和封装完成后才启动播放器。首次准备最长等待四分钟；失败会显示实际错误，可重新点击本集重试。服务端取流仍依赖第三方接口与网络，健康检查正常不代表所有上游内容都可用。
+
+播放后段会提前准备下一集；后台下载和预准备在资源繁忙时让位于当前播放。切集保留倍速与音量，进度保存不会阻塞切集。临时网络中断或持续卡住时最多自动恢复两次并保留已知位置，也可手动重试、切上一集/下一集。浏览器拒绝自动播放时会明确提示点击播放。
+
+正在播放的缓存定期续租，减少缓存清理造成的拖动失效；尾部 moov 的未加密媒体会先封装成 faststart。当前仍采用“先完成本集下载和解密再播放”，冷启动的等待与片源大小、服务器出口和转码速度有关，并非低延迟直播。
+
+## 配置
+
+常用设置可写入 .env，完整示例见 [.env.example](.env.example)。
+
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| GW_TAG | latest | GHCR 镜像标签，可固定已发布版本 |
+| GW_BIND | 127.0.0.1 | 宿主机监听地址 |
+| GW_PORT | 8080 | 宿主机端口 |
+| CACHE_TTL_MIN | 180 | 解密缓存保留分钟，0 关闭时间淘汰 |
+| CACHE_MAX_MB | 2048 | 解密缓存容量上限，0 不限容量 |
+| CACHE_SWEEP_SEC | 300 | 缓存清理间隔，单位秒 |
+| CACHE_MAX_FILES | 0 | 可选成品文件数上限，0 不限数量 |
+| MEDIA_CONCURRENCY | 2 | 下载解密并发数，范围 1～8 |
+| HG_TRANSCODE | 0 | 设为 1 将媒体转为 H.264/AAC，适合不支持 HEVC 的浏览器 |
+| PLAYBACK_IDENTITY_TTL_HOURS | 720 | 播放身份持久化有效期，单位小时 |
+| DOWNLOAD_MAX_MB | 10240 | 全站下载成品与正在写入内容的容量上限，独立于播放缓存 |
+| DOWNLOAD_CONCURRENCY | 2 | 后台下载任务并发数，范围 1～4 |
+| SETUP_TOKEN | 自动生成 | 首次管理员初始化口令 |
+| PUBLIC_ORIGIN | 空 | HTTPS 反向代理的完整来源，无路径或尾部斜杠 |
+| COOKIE_SECURE | 0 | HTTPS 设 1；启用 Secure 会话 Cookie |
+| TZ | Asia/Shanghai | 日志时区 |
+
+缓存由取流进程统一管理。正在处理或播放的文件会受到保护；新成品有一分钟保护时间，因此繁忙时占用可暂时超过上限，后续清扫再回收。失败的半成品不会用于播放；旧版缓存不会被当作新版成品使用。
+
+镜像使用 Node.js 24 和 ffmpeg；ffmpeg 同时支持标准 CENC 子样本解密回退、尾部 moov 封装和可选转码。开启转码后使用独立缓存，增加 CPU 开销。
+
+下载文件不会被播放缓存清理自动删除。到达 DOWNLOAD_MAX_MB 后新任务会明确失败；删除不需要的已完成任务后可以重试。每个账号最多 500 个任务，全站最多 5000 个任务；收藏和观看历史各保留最多 500 部剧。重启后未完成任务重新排队，已完成文件和个人数据保留。下载是先保存到服务器，再由浏览器保存到本机；浏览器连续多文件限制可通过合并 ZIP 避免。
+
+## 开发与验证
+
+Node.js 24+ 和 ffmpeg，运行代码不需要安装 npm 依赖。YAML 静态校验额外需要 Python 与 PyYAML；CI 会安装它。测试中的真实媒体用例需要 ffmpeg，缺失时会明确跳过。
+
+```bash
+npm run check
+npm test
+npm run test:vendor
+```
+
+可选启用 Git 提交检查：bash tools/install-hooks.sh。
+
+目录：
+
+```text
+server/
+  gateway.js       网页入口与生命周期
+  web/index.html   网页界面
+  lib/             账号权限、SQLite、个人数据、下载队列、反代与进程守护
+  vendor/          取址、设备注册、签名与解密实现
+tests/             账号隔离、进度、下载恢复、媒体、网页竞争与真实 ffmpeg 回归测试
+tools/             静态检查、自检与容器冒烟检查
+.github/workflows/ 容器验证和 GHCR 发布
+docker-compose.yml
+docker-compose.build.yml
+```
+
+仅保留 checks.yml 和 docker.yml 两个工作流。v* 或 gw-* 标签以及手动运行可以发布 linux/amd64、linux/arm64 镜像，镜像名称继续使用 ghcr.io/kid941005/thlredguo-gateway。
+
+[服务端维护说明](server/README.md)提供请求链路、运行参数与排障信息。第三方代码保留原许可证及来源信息，见 [vendor LICENSE](server/vendor/hongguo-web/LICENSE)。本项目用于技术学习；请遵守内容来源的使用规则和版权要求。

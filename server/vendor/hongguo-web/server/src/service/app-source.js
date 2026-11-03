@@ -89,7 +89,7 @@ async function fetch(vid, quality) {
 
   // ---- 2. 片源模型：新版可能直接内联在 video_model.video_list ----
   let info = model;
-  if (!Array.isArray(model.video_list) || model.video_list.length === 0) {
+  if (!model.video_list || typeof model.video_list !== 'object' || Object.keys(model.video_list).length === 0) {
     const fallback = parseFallback(model.fallback_api);
     if (fallback === null || fallback === '') {
       throw new Error('App 接口未返回本集片源地址');
@@ -154,7 +154,7 @@ async function fetch(vid, quality) {
       Json.optStr(child(r.item, 'encrypt_info').spade_a, ''));
     let keyOk = spade === '';
     if (spade !== '') {
-      keyOk = Spade.isValidKey(Spade.unwrapV1(Crypto.base64Decode(spade), 0));
+      keyOk = Spade.isValidKey(Spade.spadeToKey(spade, 0).key);
     }
     if (!keyOk) continue; // spade_a 解不出合法 key 的候选不可用
     for (const candidate of urlCandidates(r.item)) {
@@ -434,7 +434,12 @@ function firstNonEmpty(...vals) {
 
 /** 清掉上游常见的转义形式（他的 cleanUrl）。 */
 function cleanUrl(value) {
-  return String(value).replace(/\\\//g, '/').replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
+  let text = String(value).trim();
+  if (!/^https?:/i.test(text) && text.length <= 16384 && /^[A-Za-z0-9+/_=-]+$/.test(text)) {
+    const decoded = Buffer.from(text.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    if (/^https?:/i.test(decoded)) text = decoded;
+  }
+  return text.replace(/\\\//g, '/').replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
 }
 
 // ==================== URL 解密与校验 ====================

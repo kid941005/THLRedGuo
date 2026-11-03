@@ -112,12 +112,14 @@ class Server {
    * 返回 Promise，resolve 出底层 http.Server（listen 成功后）。
    */
   start(host, port) {
+    const cacheTimer = require('./service/cache-store').start();
     this.httpServer = http.createServer((req, res) => {
       this.handle(req, res).catch((e) => {
         Log.error('未捕获的处理异常: ' + (e && e.message ? e.message : e), e);
         try { Res.fail(req, res, 500, 'internal error'); } catch (e2) { /* headers sent */ }
       });
     });
+    this.httpServer.once('close', () => clearInterval(cacheTimer));
     return new Promise((resolve, reject) => {
       this.httpServer.once('error', reject);
       this.httpServer.listen(port, host, () => {
@@ -158,6 +160,13 @@ class Server {
       }
       const method = req.method;
       const q = Http.parseQuery(rawQuery);
+      for (const field of ['offset', 'limit']) {
+        if (q[field] !== undefined && (!/^\d+$/.test(q[field]) || !Number.isSafeInteger(Number(q[field])) ||
+            (field === 'limit' && (Number(q[field]) < 1 || Number(q[field]) > 120)))) {
+          Res.fail(req, res, 400, '分页参数无效'); return;
+        }
+      }
+      if (q.quality !== undefined && !/^(?:best|auto|\d{3,4}p?)$/.test(q.quality)) { Res.fail(req, res, 400, '清晰度参数无效'); return; }
 
       // CORS 预检
       if (method === 'OPTIONS') {
@@ -188,7 +197,7 @@ class Server {
             + '（请在客户端配置本地链路密钥；首次访问可先请求 /api-key）');
           return;
         }
-        if (!this.rateLimit(key)) {
+        if (pathname !== '/prepare' && !this.rateLimit(key)) {
           Res.fail(req, res, 429, '超过限流 ' + this.ratePerMin + '/分钟');
           return;
         }
@@ -288,6 +297,8 @@ class Server {
       m.ffmpeg = Stream.ffmpegAvailable();
       m.transcode = Stream.transcodeEnabled();
       m.h264_encoder = Stream.h264EncoderName();
+      m.cache = require('./service/cache-store').summary();
+      m.playback_device_persisted = require('./service/playback-device').isPersisted();
       Res.json(req, res, 200, m);
       return;
     }
@@ -342,13 +353,11 @@ class Server {
       const m = Json.obj();
       m.board = board;
       m.name = Client.RANK_NAMES[board];
-      if (offset > 0) {
+      {
         const pg = await Client.rankPage(board, limit, offset);
         m.items = pg.items;
         m.has_more = pg.hasMore;
         m.next_offset = pg.nextOffset;
-      } else {
-        m.items = await Client.rank(board, limit);
       }
       Res.json(req, res, 200, m);
       return;
@@ -379,16 +388,12 @@ class Server {
       if (seenRaw !== undefined && seenRaw !== null && seenRaw !== '') {
         seen = seenRaw.split(',');
       }
-      if (offset > 0 || seen !== null) {
+      {
         const pg = await Client.latestPage(genre, onlyToday, limit, refresh, seen, offset);
         m.count = pg.items.length;
         m.items = pg.items;
         m.has_more = pg.hasMore;
         m.next_offset = pg.nextSkip;
-      } else {
-        const items = await Client.latest(genre, onlyToday, limit, refresh);
-        m.count = items.length;
-        m.items = items;
       }
       Res.json(req, res, 200, m);
       return;
@@ -425,14 +430,12 @@ class Server {
       let nextOffset = 0;
       const offset = Number.parseInt(q.offset !== undefined ? q.offset : '0', 10);
       const seenRaw = q.seen;
-      if (offset > 0 || (seenRaw !== undefined && seenRaw !== null && seenRaw !== '')) {
-        const seen = seenRaw.split(',');
+      {
+        const seen = seenRaw ? seenRaw.split(',') : [];
         const pg = await Client.browsePage(genre, opts, seen, offset);
         items = pg.items;
         hasMore = pg.hasMore;
         nextOffset = pg.nextSkip;
-      } else {
-        items = await Client.browse(genre, opts);
       }
       // 补上播放与剧集入口
       for (const itObj of items) {
@@ -449,10 +452,8 @@ class Server {
       m.name = Client.GENRE_NAMES[genre];
       m.count = items.length;
       m.items = items;
-      if (hasMore || nextOffset > 0) {
-        m.has_more = hasMore;
-        m.next_offset = nextOffset;
-      }
+      m.has_more = hasMore;
+      m.next_offset = nextOffset;
       Res.json(req, res, 200, m);
       return;
     }
@@ -546,6 +547,13 @@ class Server {
       return;
     }
 
+    if (method === 'GET' && pathname === '/prepare') {
+      if (!/^\d{1,30}$/.test(q.vid || '')) { Res.fail(req, res, 400, '分集编号无效'); return; }
+      const status = Stream.prepare(q.vid, q.quality || 'best', q.retry === '1', q.background === '1');
+      Res.json(req, res, 200, status);
+      return;
+    }
+
     if (method === 'GET' && pathname === '/prewarm') {
       const vid = q.vid;
       if (vid === undefined || vid === null || vid === '') {
@@ -581,7 +589,7 @@ class Server {
       return;
     }
 
-    if (method === 'GET' && pathname === '/stream') {
+    if ((method === 'GET' || method === 'HEAD') && pathname === '/stream') {
       await this.handleStream(req, res, q);
       return;
     }

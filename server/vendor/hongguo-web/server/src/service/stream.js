@@ -17,15 +17,16 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const { Worker } = require('worker_threads');
 
 const Mp4 = require('../core/mp4');
 const Spade = require('../core/spade');
 const Config = require('../util/config');
 const Log = require('../util/log');
 const Http = require('../util/http');
-const Safeguards = require('../core/safeguards');
 const AppSource = require('../service/app-source');
 const { readFullySync, escapeRe } = require('../util/common');
+const Cache = require('./cache-store');
 
 /** 默认保留的缓存文件数上限。 */
 const CACHE_MAX_FILES = 30;
@@ -36,13 +37,7 @@ const CACHE_MAX_FILES = 30;
  *  3) 都为空则退回 'server'（即 server/stream-cache）。
  *  统一转绝对路径：/download 会把落盘路径回给调用方，相对路径不便定位文件。 */
 function cacheDir() {
-  const d = Log.env('HONGGUO_STREAM_CACHE', null);
-  if (d !== null) return path.resolve(d);
-  const dd = Config.str('runtime.data_dir', null);
-  // 默认落在 server/stream-cache（data 目录已撤销，缓存直接挂到 server 下）。
-  // runtime.data_dir 语义收窄为「视频缓存根目录」，设了就以它为根。
-  const base = (dd !== null) ? dd : 'server';
-  return path.resolve(base, 'stream-cache');
+  return Cache.cacheDir();
 }
 
 /** 同键并发去重：同一集并发请求只解密一次。键为 out 路径，值为 Promise<string>。 */
@@ -64,23 +59,15 @@ async function videoTrack(vid, quality) {
 async function download(url, dest) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   const tmp = dest + '.part';
-  const res = await Http.send({
-    url,
-    method: 'GET',
-    timeoutMs: 120000,
-    headers: { 'user-agent': 'Mozilla/5.0' },
-  });
-  if (res.status >= 400) {
-    throw new Error('下载失败 HTTP ' + res.status);
-  }
   try {
-    fs.writeFileSync(tmp, res.body);
+    const size = await Http.downloadFile({ url, timeoutMs: 120000,
+      headers: { 'user-agent': 'Mozilla/5.0' } }, tmp);
+    fs.renameSync(tmp, dest);
+    return size;
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch (ignore) { /* 忽略 */ }
     throw e;
   }
-  fs.renameSync(tmp, dest);
-  return res.body.length;
 }
 
 // ==================== 离线解密 ====================
@@ -123,7 +110,7 @@ async function offlineDecrypt(spadeAB64, ctPath, outPath) {
     const fileLen = fs.fstatSync(raf).size;
     const moov = Mp4.findMoov(new Mp4.FileHeadReader(raf), fileLen);
     if (moov === null) throw new Error('密文文件无moov 盒（不是有效的 MP4）');
-    if (moov.size > 0x7FFFFFFF - 8) {
+    if (moov.size > 32 * 1048576) {
       throw new Error('moov 段异常过大，无法载入内存');
     }
     const moovBuf = Buffer.alloc(moov.size);
@@ -132,14 +119,15 @@ async function offlineDecrypt(spadeAB64, ctPath, outPath) {
   } finally {
     fs.closeSync(raf);
   }
-  if (analysis.tracks.length === 0) throw new Error('密文文件无加密轨');
+  const encryptedTracks = analysis.tracks.filter(t => (t.ivs && t.ivs.length) || t.kid || t.constantIv);
+  if (encryptedTracks.length === 0) throw new Error('密文文件无加密轨');
 
   // 视频轨用于 IV 自证；随后所有加密轨（视频+音频）统一用同一 content key 解密
   let video = null;
-  for (const t of analysis.tracks) {
+  for (const t of encryptedTracks) {
     if (t.handler === 'vide') { video = t; break; }
   }
-  if (video === null) video = analysis.tracks[0];
+  if (video === null) video = encryptedTracks[0];
 
   // ---- 2. 复制密文到 outPath（同路径时跳过：调用方已直接落在 outPath）----
   // fs.copyFileSync 由内核完成复制，无需手写 64KB 循环。
@@ -147,6 +135,7 @@ async function offlineDecrypt(spadeAB64, ctPath, outPath) {
 
   // ---- 3. 逐样本原地解密 ----
   let decrypted = 0;
+  let nativeFallback = false;
   // 样本缓冲取 256KB：足够覆盖绝大多数样本，又不会让并发时堆占用膨胀
   const out = fs.openSync(outPath, 'r+');
   try {
@@ -156,11 +145,13 @@ async function offlineDecrypt(spadeAB64, ctPath, outPath) {
     // avccSelfOk 仍会通过，导致错误的 content key 被误判为合法。
     const cands = Mp4.trackBaseIvCandidates(video);
     const vIv = Mp4.verifyVideoIv(store, video, key, cands);
-    if (vIv === null) {
-      throw new Error('content key 与密文不匹配（spade 与该密文不对应，或为 ver2 视频）');
+    if (vIv === null || encryptedTracks.some(t => (!t.ivs || t.ivs.length !== t.sampleCount) && !t.constantIv)) {
+      // Standard CENC may carry clear/encrypted subsample ranges unsupported by this JS parser.
+      // No bytes have been modified yet; let ffmpeg consume the original encryption metadata.
+      nativeFallback = true;
     }
 
-    for (const t of analysis.tracks) {
+    for (const t of nativeFallback ? [] : encryptedTracks) {
       // 每条轨用各自的逐样本 IV；缺失时才回退到该轨的 base_iv
       let iv;
       if (t === video) {
@@ -176,8 +167,9 @@ async function offlineDecrypt(spadeAB64, ctPath, outPath) {
   }
 
   // 尝试生成可播放成品：纯 JS 减壳，失败回落 ffmpeg remux；
-  // 两条路都失败则保留已解密的原始容器（raw），调用方按 raw 返回。
-  const playable = await toPlayable(outPath);
+  // 两条路都失败时明确报错，半成品不会进入缓存。
+  const playable = await toPlayable(outPath, nativeFallback ? key : null);
+  if (!playable) throw new Error('媒体封装失败，未发布播放缓存');
 
   return new DecryptOut(playable, key, decrypted, outSize);
 }
@@ -262,7 +254,7 @@ function deleteQuietly(f) {
  *
  * 本函数是内部实现：等 ffmpeg 时不阻塞事件循环，故为 async。
  */
-async function toPlayable(rawPath) {
+async function toPlayable(rawPath, decryptionKey = null) {
   const name = path.basename(rawPath);
   const dir = path.dirname(rawPath);
   // 对齐 Node 的 path.parse().name：先剥掉最后一段扩展名，再剥 .raw 段。
@@ -279,7 +271,7 @@ async function toPlayable(rawPath) {
   const want = transcodeWanted();
 
   // ---- 默认路径：纯 JS 减壳 ----
-  if (!want && Log.env('HONGGUO_PURE_STRIP', '') !== '0') {
+  if (!decryptionKey && !want && Log.env('HONGGUO_PURE_STRIP', '') !== '0') {
     try {
       if (Mp4.stripEncryption(rawPath, out)) {
         deleteQuietly(rawPath);
@@ -293,12 +285,12 @@ async function toPlayable(rawPath) {
 
   const enc = want ? h264Encoder() : null;
   if (want && enc === null) {
-    Log.info('HG_TRANSCODE=1 但未找到可用的 H.264 编码器，本集退回 -c copy；'
-      + '若浏览器不支持 HEVC 会黑屏');
+    throw new Error('已开启 H.264 转码，但没有可用编码器');
   }
 
   const cmd = [
-    '-y', '-loglevel', 'error', '-i', rawPath,
+    '-y', '-loglevel', 'error',
+    ...(decryptionKey ? ['-decryption_key', decryptionKey] : []), '-i', rawPath,
     '-c:v', enc !== null ? enc.name : 'copy',
   ];
   if (enc !== null) cmd.push(...enc.args);
@@ -362,12 +354,26 @@ async function toPlayable(rawPath) {
         + (detail === '' ? '' : '：' + detail));
       return null;
     }
+    if (decryptionKey && !(await verifyDecodedFrames(out))) {
+      Log.warn('CENC 回退未通过视频解码校验，未发布媒体');
+      deleteQuietly(out);
+      return null;
+    }
     deleteQuietly(rawPath);
     return out;
   } catch (e) {
     Log.warn('ffmpeg remux 异常（' + path.basename(rawPath) + '）：' + e);
     return null;
   }
+}
+
+function verifyDecodedFrames(file) {
+  return new Promise(resolve => {
+    const child = spawn('ffmpeg', ['-v', 'error', '-xerror', '-i', file, '-frames:v', '3', '-f', 'null', '-'], { stdio: 'ignore', windowsHide: true });
+    const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(false); }, 15000);
+    child.once('error', () => { clearTimeout(timer); resolve(false); });
+    child.once('close', code => { clearTimeout(timer); resolve(code === 0); });
+  });
 }
 
 // ==================== 缓存 ====================
@@ -386,22 +392,28 @@ class Paths3 {
  *
  * 注意 play 路径：offlineDecrypt 末尾会 remux 出「基名.play.mp4」（并删掉 raw），
  * 而基名不含.raw 段，所以加密内容最终落盘的是 <vid>_<q>.play.mp4。
- * 三个变体都必须参与命中判定，否则加密集永远命中不了缓存。
+ * 只命中发布后的 play/out 成品，raw 始终属于未发布工作文件。
  */
 function cachePaths(vid, quality) {
   const q = (quality === null || quality === undefined) ? '' : String(quality);
   let safeQ = q.replace(/[^\w]/g, '');
   if (safeQ === '') safeQ = 'best';
-  const base = path.join(cacheDir(), vid + '_' + safeQ);
+  if (!/^\d{1,30}$/.test(String(vid))) throw new Error('分集编号无效');
+  // v2 excludes all legacy cache files, including containers published after failed decryption.
+  const base = path.join(cacheDir(), vid + '_v2_' + (transcodeWanted() ? 'h264_' : '') + safeQ);
   return new Paths3(base + '.mp4', base + '.play.mp4', base + '.raw.mp4');
 }
 
 /** 命中缓存则返回可播放文件路径，否则 null。 */
 function cachedPath(vid, quality) {
   const p = cachePaths(vid, quality);
-  for (const c of [p.play, p.out, p.raw]) {
+  for (const c of [p.play, p.out]) {
     try {
-      if (fs.existsSync(c) && fs.statSync(c).size > 0) return c;
+      if (fs.existsSync(c) && fs.statSync(c).size > 0) {
+        const now = new Date();
+        fs.utimesSync(c, now, now);
+        return c;
+      }
     } catch (e) {
       // 忽略
     }
@@ -409,137 +421,182 @@ function cachedPath(vid, quality) {
   return null;
 }
 
-/** 预热失败后的最大重试次数（不含首次尝试），即最多共尝试 3 次。 */
-const PREWARM_MAX_RETRIES = 2;
-
-/** 两次预热重试之间的间隔（毫秒）。 */
-const PREWARM_RETRY_DELAY_MS = 500;
-
-/** 预热执行体：失败时按 PREWARM_MAX_RETRIES 重试，全数失败才抛出。 */
-async function prewarmOnce(vid, quality) {
-  let last = null;
-  for (let attempt = 0; attempt <= PREWARM_MAX_RETRIES; attempt++) {
-    if (attempt > 0) {
-      // 设备注册失败会被缓存，重试前显式清空，否则三次尝试打的是同一个失败结果
-      if (last !== null && last.code === 'DEVICE_REGISTRATION_FAILED') {
-        AppSource.resetPlaybackDevice();
-      }
-      // 重试前稍作等待，给瞬时故障一个恢复窗口
-      await Safeguards.sleep(PREWARM_RETRY_DELAY_MS);
+// Browser preparation is polled separately from media byte reads.
+const preparations = new Map();
+const waiting = [];
+const operations = new Map();
+let active = 0;
+const CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.MEDIA_CONCURRENCY) || 2));
+function acquireSlot(key, background) {
+  return new Promise((resolve, reject) => {
+    const enter = () => {
+      active++;
+      let released = false;
+      resolve(() => { if (released) return; released = true; active--; const next = waiting.shift(); if (next) next.enter(); });
+    };
+    if (active < CONCURRENCY) enter();
+    else if (waiting.length < 64) {
+      const queued = { key, background, enter };
+      if (background) waiting.push(queued);
+      else { const index = waiting.findIndex(item => item.background); if (index < 0) waiting.push(queued); else waiting.splice(index, 0, queued); }
     }
-    try {
-      return await ensureDecrypted(vid, quality);
-    } catch (e) {
-      last = e;
-      Log.warn('预热失败 ' + vid + '（第 ' + (attempt + 1) + '/'
-        + (PREWARM_MAX_RETRIES + 1) + ' 次尝试）：' + errMsg(e));
-    }
-  }
-  throw last;
+    else reject(new Error('取流队列已满，请稍后重试'));
+  });
 }
-
-/** 取异常文案。 */
-function errMsg(e) {
-  if (e === null || e === undefined) return 'null';
-  return (e.message !== undefined && e.message !== null) ? String(e.message) : String(e);
-}
-
-/**
- * 预热执行位：有界，避免高频调用 /prewarm 时无限堆积。
- *
- * 背景：每次预热都会跑完整的下载 + 解密（各自持一份样本缓冲），
- * 若不加限制，高频调用会让并发数与内存同步膨胀。
- * Node 用「有界执行位 + 队列」实现限流，队列写满时退化为
- * 调用方直接执行（队列满就不再排队，避免无限堆积）。
- */
-const PREWARM_MAX_CONCURRENCY = 4;
-const PREWARM_QUEUE_MAX = 64;
-let prewarmActive = 0;
-const prewarmQueue = [];
-
-function runPrewarm(vid, quality) {
-  prewarmActive++;
-  prewarmOnce(vid, quality)
-    .catch((e) => {
-      Log.warn('预热最终失败 ' + vid + '：已重试 ' + PREWARM_MAX_RETRIES
-        + ' 次仍不成功，' + errMsg(e));
-    })
-    .finally(() => {
-      prewarmActive--;
-      const next = prewarmQueue.shift();
-      if (next !== undefined) next();
-    });
-}
-
-/** 预热：后台触发解密，不阻塞响应。 */
-async function prewarm(vid, quality) {
+function prepare(vid, quality, retry = false, background = false) {
+  const key = cachePaths(vid, quality).out;
   const hit = cachedPath(vid, quality);
-  if (hit !== null) return 'cached';
-  // 故意不等待：让解密在后台跑
-  if (prewarmActive >= PREWARM_MAX_CONCURRENCY && prewarmQueue.length >= PREWARM_QUEUE_MAX) {
-    // 执行位与队列都满：退化为当前调用同步执行，保证预热仍然生效
-    try {
-      await prewarmOnce(vid, quality);
-    } catch (e) {
-      Log.warn('预热最终失败 ' + vid + '：已重试 ' + PREWARM_MAX_RETRIES
-        + ' 次仍不成功，' + errMsg(e));
-      return 'failed';
+  let job = preparations.get(key);
+  // Reclaim bounded preparation records before inserting either hot or cold entries.
+  if (!job) {
+    for (const [id, old] of preparations) {
+      if (old.state !== 'preparing' && (preparations.size >= 128 || Date.now() - old.at > 600000)) { clearTimeout(old.timer); if (old.release) old.release(); preparations.delete(id); }
     }
-    return 'warming';
+    if (preparations.size >= 128) return { state: 'failed', error: '取流队列已满，请稍后重试' };
   }
-  const schedule = () => runPrewarm(vid, quality);
-  if (prewarmActive < PREWARM_MAX_CONCURRENCY) schedule();
-  else prewarmQueue.push(schedule);
-  return 'warming';
+  if (!background) {
+    const index = waiting.findIndex(entry => entry.key === key && entry.background);
+    if (index >= 0) { const [entry] = waiting.splice(index, 1); entry.background = false; waiting.unshift(entry); }
+  }
+  if (hit) {
+    if (!job) { job = {}; preparations.set(key, job); }
+    if (job.release) job.release();
+    clearTimeout(job.timer);
+    job.release = Cache.retain(hit);
+    job.timer = setTimeout(() => { if (job.release) job.release(); job.release = null; }, 45000);
+    job.timer.unref();
+    job.state = 'ready'; job.at = Date.now();
+  } else if (!job || (retry && job.state === 'failed') || job.state === 'ready') {
+    for (const [id, old] of preparations) {
+      if (old.state !== 'preparing' && (preparations.size >= 128 || Date.now() - old.at > 600000)) {
+        clearTimeout(old.timer); if (old.release) old.release(); preparations.delete(id);
+      }
+    }
+    if (preparations.size >= 128) return { state: 'failed', error: '取流队列已满，请稍后重试' };
+    // Speculative next-episode preparation should not compete with a busy playback/download queue.
+    if (background && (active >= Math.max(1, CONCURRENCY - 1) || waiting.length)) return { state: 'preparing', stage: 'queued', error: '' };
+    job = { state: 'preparing', at: Date.now(), error: '' };
+    preparations.set(key, job);
+    ensureDecrypted(vid, quality, { background }).then(() => { job.state = 'ready'; job.at = Date.now(); })
+      .catch(e => { job.state = 'failed'; job.error = e.message; job.at = Date.now(); });
+  }
+  return { state: job.state, stage: job.state === 'ready' ? 'ready' : operations.get(key)?.stage || job.state, error: job.state === 'failed' ? job.error : '' };
+}
+async function prewarm(vid, quality) {
+  const job = prepare(vid, quality);
+  return job.state === 'ready' ? 'cached' : job.state === 'failed' ? 'failed' : 'warming';
 }
 
 /** 确保某集已解密并落盘缓存，返回可播放 mp4 路径。 */
-async function ensureDecrypted(vid, quality) {
+async function ensureDecrypted(vid, quality, { background = false } = {}) {
   fs.mkdirSync(cacheDir(), { recursive: true });
   const p = cachePaths(vid, quality);
-
-  const hit = cachedPath(vid, quality);
-  if (hit !== null) {
-    // 只有残留的 raw（缺 play 成品）才需要补一次减壳/remux
-    if (hit !== p.raw) return hit;
-    const r = await toPlayable(p.raw);
-    if (r !== null) return r;
-  }
 
   const outKey = p.out;
   const exist = INFLIGHT.get(outKey);
   if (exist !== undefined) return exist; // 同集并发只解一次
+  const hit = cachedPath(vid, quality);
+  if (hit !== null) return hit;
 
   const task = (async () => {
-    const again = cachedPath(vid, quality);
-    if (again !== null && again !== p.raw) return again;
-
-    const t = await videoTrack(vid, quality);
-    if (t === null || t === undefined || t.url === null
-        || t.url === undefined || t.url === '') {
-      throw new Error('无直链 / video_model');
+    const operation = { stage: 'queued' }; operations.set(outKey, operation);
+    const releaseSlot = await acquireSlot(outKey, background);
+    let work, releaseWork;
+    try {
+      work = fs.mkdtempSync(path.join(cacheDir(), '.work-'));
+      releaseWork = Cache.retain(work);
+      const raw = path.join(work, path.basename(p.raw));
+      const plain = path.join(work, path.basename(p.out));
+      const t = await videoTrack(vid, quality);
+      if (t === null || t === undefined || t.url === null
+          || t.url === undefined || t.url === '') {
+        throw new Error('无直链 / video_model');
+      }
+      if (!t.encrypt) {
+        operation.stage = 'downloading';
+        await download(t.url, plain);
+        validateMedia(plain);
+        if (transcodeWanted() || !hasFastStart(plain)) {
+          operation.stage = 'packaging';
+          const result = await toPlayable(plain);
+          if (!result) throw new Error('媒体封装失败');
+          fs.renameSync(result, p.play);
+          return p.play;
+        }
+        fs.renameSync(plain, p.out);
+        return p.out;
+      }
+      // 密文直接落在 raw 路径：offlineDecrypt 原地解密后原地减壳，
+      // 省去旧实现里 .enc -> raw 的那次整文件拷贝（13MB/集的纯浪费）。
+      operation.stage = 'downloading';
+      await download(t.url, raw);
+      operation.stage = 'decrypting';
+      const r = await decryptInWorker(t.spadeA, raw);
+      validateMedia(r.path);
+      fs.renameSync(r.path, p.play);
+      return p.play;
+    } finally {
+      // work is generated directly beneath cacheDir and never contains caller-supplied paths.
+      try { if (work) fs.rmSync(work, { recursive: true, force: true }); } finally {
+        if (releaseWork) releaseWork();
+        releaseSlot();
+      }
     }
-    if (!t.encrypt) {
-      await download(t.url, p.out);
-      pruneCache();
-      return p.out;
-    }
-    // 密文直接落在 raw 路径：offlineDecrypt 原地解密后原地减壳，
-    // 省去旧实现里 .enc -> raw 的那次整文件拷贝（13MB/集的纯浪费）。
-    await download(t.url, p.raw);
-    const r = await offlineDecrypt(t.spadeA, p.raw, p.raw);
-    // 减壳/remux 成功时返回 .play.mp4，失败时回退 raw
-    const res = (r.path !== null && r.path !== undefined) ? r.path : p.raw;
-    // 落盘完成后再清理：此时 play/raw 已是成品，不会误删半成品
-    pruneCache();
-    return res;
   })();
   INFLIGHT.set(outKey, task);
   try {
     return await task;
   } finally {
     INFLIGHT.delete(outKey);
+    operations.delete(outKey);
   }
+}
+
+function hasFastStart(file) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const size = fs.fstatSync(fd).size, header = Buffer.alloc(16);
+    let offset = 0;
+    while (offset + 8 <= size) {
+      const read = fs.readSync(fd, header, 0, 16, offset);
+      const type = header.toString('latin1', 4, 8);
+      if (type === 'moov') return true; if (type === 'mdat') return false;
+      let length = header.readUInt32BE(0);
+      if (length === 1) { if (read < 16) return false; length = Number(header.readBigUInt64BE(8)); }
+      if (!Number.isSafeInteger(length) || length < 8 || offset + length > size) return false;
+      offset += length;
+    }
+    return false;
+  } finally { fs.closeSync(fd); }
+}
+
+function validateMedia(file) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    const moov = Mp4.findMoov(new Mp4.FileHeadReader(fd), size);
+    if (!moov || moov.size > 32 * 1048576) throw new Error('媒体文件无有效 moov');
+    const bytes = Buffer.alloc(moov.size);
+    readFullySync(fd, bytes, 0, bytes.length, moov.start);
+    const tracks = Mp4.analyzeEncryptedTracks(new Mp4.ByteView(bytes, moov.start)).tracks;
+    if (!tracks.length || tracks.some(t => (t.ivs && t.ivs.length) || t.kid || t.constantIv)) throw new Error('媒体仍含加密信令或无有效轨道');
+  } finally { fs.closeSync(fd); }
+}
+
+function decryptInWorker(spade, file) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, 'decrypt-worker.js'), { workerData: { spade, file } });
+    let done = false;
+    const finish = (error, value) => {
+      if (done) return;
+      done = true; clearTimeout(timer);
+      worker.terminate().finally(() => error ? reject(error) : resolve(value));
+    };
+    const timer = setTimeout(() => finish(new Error('解密处理超时')), 90000);
+    worker.once('message', result => result.error ? finish(new Error(result.error)) : finish(null, result));
+    worker.once('error', error => finish(error));
+    worker.once('exit', code => { if (!done) finish(new Error('解密进程退出 ' + code)); });
+  });
 }
 
 // ==================== 缓存上限清理 ====================
@@ -560,56 +617,11 @@ async function ensureDecrypted(vid, quality) {
  * @returns {number} 被删除的文件数
  */
 function pruneCache(limit) {
-  if (limit === undefined || limit === null) {
-    const v = Log.env('HONGGUO_CACHE_MAX_FILES',
-      Config.num('runtime.cache.max_files', CACHE_MAX_FILES));
-    limit = (typeof v === 'number') ? v : parseInt(String(v).trim(), 10);
-    if (Number.isNaN(limit)) limit = Config.num('runtime.cache.max_files', CACHE_MAX_FILES);
-  }
-  if (limit <= 0) return 0;
-
-  const dir = cacheDir();
-  // 目录不存在说明还没落过盘，无需清理
-  let isDir = false;
-  try { isDir = fs.statSync(dir).isDirectory(); } catch (e) { isDir = false; }
-  if (!isDir) return 0;
-
-  try {
-    const keepable = [];
-    for (const n of fs.readdirSync(dir)) {
-      // 只统计成品文件（.play.mp4 / .mp4）；.raw.mp4 也以 .mp4 结尾，故一并纳入。
-      if (!n.endsWith('.play.mp4') && !n.endsWith('.mp4')) continue;
-      // 跳过下载/密文临时文件，避免删掉正在写或解密仍要用的
-      if (n.endsWith('.part') || n.endsWith('.enc')) continue;
-      const full = path.join(dir, n);
-      let st;
-      try { st = fs.statSync(full); } catch (e) { continue; }
-      if (!st.isFile()) continue;
-      keepable.push({ p: full, name: n, mtime: st.mtimeMs });
-    }
-    if (keepable.length <= limit) return 0;
-
-    // 最后修改时间倒序：靠前的保留，靠后的（更旧）删除
-    keepable.sort((a, b) => b.mtime - a.mtime);
-
-    let deleted = 0;
-    for (let i = limit; i < keepable.length; i++) {
-      const victim = keepable[i];
-      try {
-        fs.unlinkSync(victim.p);
-        deleted++;
-      } catch (e) {
-        // 单个失败不影响其余，照常删；仅记录，不中断
-        Log.warn('缓存清理：删除 ' + victim.name + ' 失败：' + errMsg(e));
-      }
-    }
-    // 正常清理不打印日志（此前每次清理都会向控制台输出一行）
-    return deleted;
-  } catch (e) {
-    // 清理是尽力而为，失败不应影响播放
-    Log.warn('缓存清理失败：' + errMsg(e));
-    return 0;
-  }
+  const configured = Number(Log.env('HONGGUO_CACHE_MAX_FILES',
+    Config.num('runtime.cache.max_files', CACHE_MAX_FILES)));
+  const count = limit == null ? configured : Number(limit);
+  if (!Number.isFinite(count) || count <= 0) return 0;
+  return Cache.sweep({ maxFiles: count, maxMb: 0, ttlMin: 0, graceMs: 0, cleanup: false });
 }
 
 // ==================== 环境探测 ====================
@@ -649,6 +661,8 @@ module.exports = {
   cachedPath,
   ensureDecrypted,
   prewarm,
+  prepare,
+  hasFastStart,
   pruneCache,
   ffmpegAvailable,
   transcodeEnabled,

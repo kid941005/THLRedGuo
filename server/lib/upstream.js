@@ -1,194 +1,119 @@
 'use strict';
-/**
- * 内置服务（vendor/hongguo-web）的生命周期与密钥托管。
- *
- * 职责：
- *  1. 拉起 / 守护子进程（崩溃后自动重启）；
- *  2. 等它就绪、取回本地 api key；
- *  3. 把设备身份文件备份到数据目录，容器重建后还原同一个 device_id。
- *
- * 不处理 HTTP 请求 —— 那是 proxy.js 的事。
- */
-
+// Local supervisor: readiness requires a recent live health probe and an internal key.
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
-const {
-  HK_PORT,
-  UPSTREAM,
-  VENDOR_ENTRY,
-  VENDOR_ROOT,
-  VENDOR_KEY_FILE,
-  DATA_DIR,
-  KEY_BACKUP,
-} = require('./config');
+const config = require('./config');
 
-const state = { child: null, ready: false, key: '' };
-
-/** 崩溃重启的退避参数：连续失败时拉长间隔，就绪后复位 */
-const RESTART_BASE_MS = 3000;
-const RESTART_MAX_MS = 60000;
-let restartDelay = RESTART_BASE_MS;
-
-// ---------------------------------------------------------------- 身份备份
-
-/** 启动前还原设备身份：容器重建后镜像内的 apikeys.json 已丢，从卷里恢复 */
-function restoreKeyBackup() {
-  try {
-    if (fs.existsSync(VENDOR_KEY_FILE)) return false;
-    if (!fs.existsSync(KEY_BACKUP)) return false;
-    fs.mkdirSync(path.dirname(VENDOR_KEY_FILE), { recursive: true });
-    fs.copyFileSync(KEY_BACKUP, VENDOR_KEY_FILE);
-    console.log('[gateway] 已从备份恢复设备身份:', KEY_BACKUP);
-    return true;
-  } catch (e) {
-    console.error('[gateway] 恢复设备身份失败:', e.message);
-    return false;
-  }
-}
-
-/** 拿到密钥后把 apikeys.json 备份到数据目录（先写临时文件再改名，避免半截文件） */
-function backupKey() {
-  try {
-    if (!fs.existsSync(VENDOR_KEY_FILE)) return false;
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    const tmp = `${KEY_BACKUP}.tmp`;
-    fs.copyFileSync(VENDOR_KEY_FILE, tmp);
-    fs.renameSync(tmp, KEY_BACKUP);
-    return true;
-  } catch (e) {
-    console.error('[gateway] 备份设备身份失败:', e.message);
-    return false;
-  }
-}
-
-function devicePersisted() {
-  return fs.existsSync(KEY_BACKUP);
-}
-
-// ---------------------------------------------------------------- 子进程
-
-function start() {
-  if (!fs.existsSync(VENDOR_ENTRY)) {
-    console.error('[gateway] 缺少内置服务入口:', VENDOR_ENTRY);
-    process.exit(1);
-  }
-  const child = spawn(process.execPath, [VENDOR_ENTRY], {
-    // 必须以 vendor 根目录为 cwd：内置服务用相对路径 server/config/ 读写配置，
-    // 在 server/src 下启动会生成嵌套的 server/src/server/config 副本。
-    cwd: VENDOR_ROOT,
-    env: {
-      ...process.env,
-      PORT: String(HK_PORT),
-      BIND_HOST: '127.0.0.1',
-      // 容器内不弹浏览器；转码默认关闭（取流为纯解密，不需要 ffmpeg）
-      HG_OPEN_BROWSER: '0',
-      HG_TRANSCODE: process.env.HG_TRANSCODE || '0',
-      // 只决定视频解密缓存的落盘位置；设备身份固定在 server/config/apikeys.json
-      HONGGUO_DATA_DIR: DATA_DIR,
-    },
-    stdio: 'inherit',
-  });
-  state.child = child;
-
-  child.on('error', (e) => {
-    console.error('[gateway] 内置服务启动失败:', e.message);
-  });
-  child.on('exit', (code) => {
-    console.error('[gateway] 内置服务退出，code=', code);
-    state.ready = false;
-    state.key = '';
-    // 连续崩溃时指数退避（3s → 6s → 12s … 上限 60s）：
-    // 配置错误会让子进程立刻退出，固定 3 秒重试只会把日志刷满
-    const delay = restartDelay;
-    restartDelay = Math.min(restartDelay * 2, RESTART_MAX_MS);
-    console.error(`[gateway] ${Math.round(delay / 1000)} 秒后重启内置服务`);
-    setTimeout(() => {
-      start();
-      // 重启后必须重新探测就绪并取新密钥，否则健康检查会一直停在 false
-      wait(60000).then((ok) => {
-        if (ok) ensureKey(false);
-        else console.error('[gateway] 内置服务重启后仍未就绪');
+function createSupervisor(options = {}) {
+  const url = options.url || config.UPSTREAM;
+  const timeoutMs = options.timeoutMs || 2000;
+  const pollMs = options.pollMs || 5000;
+  const staleMs = options.staleMs || 15000;
+  const state = { child: null, key: '', ready: false, checkedAt: 0, health: null };
+  let stopped = false, generation = 0, monitor, restarting, pending;
+  let failures = 0, spawnedAt = 0;
+  let delay = 3000;
+  function json(route) {
+    return new Promise((resolve, reject) => {
+      const req = http.get(url + route, res => {
+        let text = '';
+        res.on('error', reject);
+        res.on('aborted', () => reject(new Error('probe aborted')));
+        res.on('data', chunk => { text += chunk; if (text.length > 65536) req.destroy(new Error('probe too large')); });
+        res.on('end', () => {
+          try { resolve({ status: res.statusCode, body: JSON.parse(text) }); } catch (e) { reject(e); }
+        });
       });
-    }, delay);
-  });
-  return child;
-}
-
-function stop() {
-  if (!state.child) return;
-  try {
-    state.child.kill('SIGTERM');
-  } catch (_) {}
-}
-
-// ---------------------------------------------------------------- 就绪与密钥
-
-function httpJson(url, headers) {
-  return new Promise((resolve, reject) => {
-    const req = http.get(url, { headers: headers || {}, timeout: 8000 }, (res) => {
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => {
-        const text = Buffer.concat(chunks).toString('utf8');
-        try {
-          resolve({ status: res.statusCode, json: JSON.parse(text) });
-        } catch (e) {
-          resolve({ status: res.statusCode, json: null, text });
-        }
-      });
+      const timer = setTimeout(() => req.destroy(new Error('probe timeout')), timeoutMs);
+      req.once('close', () => clearTimeout(timer));
+      req.once('error', reject);
     });
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('timeout'));
-    });
-    req.on('error', reject);
-  });
-}
-
-/** 轮询内置服务的 /health，直到就绪或超时 */
-async function wait(timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const { status } = await httpJson(`${UPSTREAM}/health`);
-      if (status === 200) {
-        state.ready = true;
-        // 起来了就复位退避，下次崩溃仍从 3 秒开始
-        restartDelay = RESTART_BASE_MS;
+  }
+  function persisted() {
+    try { const keys = JSON.parse(fs.readFileSync(config.KEY_BACKUP, 'utf8')); return typeof keys.device_id === 'string' && Array.isArray(keys.keys); }
+    catch (_) { return false; }
+  }
+  async function refresh() {
+    if (stopped) return false;
+    if (pending) return pending;
+    const epoch = generation;
+    pending = (async () => {
+      try {
+        const health = await json('/health');
+        const key = await json('/api-key');
+        if (health.status !== 200 || health.body.ok !== true || key.status !== 200 || typeof key.body.api_key !== 'string' || !key.body.api_key) throw new Error('not ready');
+        if (stopped || epoch !== generation) return false;
+        state.ready = true; state.key = key.body.api_key; state.health = health.body;
+        state.checkedAt = Date.now(); delay = 3000; failures = 0;
         return true;
-      }
-    } catch (_) {}
-    await new Promise((r) => setTimeout(r, 800));
+      } catch (_) {
+        if (epoch === generation) {
+          state.ready = false; state.key = ''; state.health = null; failures++;
+          if (state.child && failures >= 3 && Date.now() - (state.checkedAt || spawnedAt) > 30000) state.child.kill('SIGKILL');
+        }
+        return false;
+      } finally { pending = null; }
+    })();
+    return pending;
   }
-  return false;
-}
-
-/** 取本地 api key（客户端不需要知道它）；force=true 用于 401 后强制刷新 */
-async function ensureKey(force) {
-  if (state.key && !force) return state.key;
-  try {
-    const { json } = await httpJson(`${UPSTREAM}/api-key`);
-    if (json && typeof json.api_key === 'string' && json.api_key) {
-      state.key = json.api_key;
-      // 取到密钥说明 apikeys.json 已生成，立即备份，容器重建后才能还原同一设备身份
-      backupKey();
+  function monitorStart() {
+    if (monitor) return;
+    stopped = false;
+    refresh();
+    monitor = setInterval(refresh, pollMs);
+    monitor.unref();
+  }
+  function restoreKeyBackup() {
+    // Migrate a pre-volume runtime once; all subsequent key writes go straight to the volume.
+    if (!fs.existsSync(config.KEY_BACKUP) && fs.existsSync(config.VENDOR_KEY_FILE)) {
+      fs.mkdirSync(config.DATA_DIR, { recursive: true });
+      fs.copyFileSync(config.VENDOR_KEY_FILE, config.KEY_BACKUP);
     }
-  } catch (_) {}
-  return state.key;
+  }
+  function start() {
+    stopped = false;
+    if (state.child) return state.child;
+    if (!fs.existsSync(config.VENDOR_ENTRY)) throw new Error('Missing vendor entry');
+    const child = spawn(process.execPath, [config.VENDOR_ENTRY], {
+      cwd: config.VENDOR_ROOT,
+      env: { ...process.env, PORT: String(config.HK_PORT), BIND_HOST: '127.0.0.1', HG_OPEN_BROWSER: '0',
+        HONGGUO_KEY_FILE: config.KEY_BACKUP, HONGGUO_DATA_DIR: config.DATA_DIR,
+        HONGGUO_STREAM_CACHE: config.CACHE_DIR, HONGGUO_DOWNLOAD_DIR: path.join(config.DATA_DIR, 'downloads') },
+      stdio: 'inherit', windowsHide: true,
+    });
+    state.child = child;
+    spawnedAt = Date.now(); failures = 0;
+    child.once('error', e => console.error('[gateway] upstream process error:', e.message));
+    child.once('close', code => {
+      if (state.child !== child) return;
+      state.child = null; state.ready = false; state.key = ''; state.health = null; generation++;
+      if (stopped) return;
+      console.error('[gateway] upstream exited:', code);
+      const wait = delay; delay = Math.min(60000, delay * 2);
+      restarting = setTimeout(() => { restarting = null; start(); }, wait);
+      restarting.unref();
+    });
+    monitorStart();
+    refresh();
+    return child;
+  }
+  function stop() {
+    stopped = true; generation++; state.ready = false; state.key = '';
+    clearInterval(monitor); monitor = null;
+    clearTimeout(restarting); restarting = null;
+    if (state.child) state.child.kill('SIGTERM');
+  }
+  async function wait(timeout) {
+    const until = Date.now() + timeout;
+    while (!stopped && Date.now() < until) { if (await refresh()) return true; await new Promise(r => setTimeout(r, 200)); }
+    return false;
+  }
+  return { start, stop, wait, refresh, startMonitor: monitorStart, restoreKeyBackup,
+    ensureKey: async () => { await refresh(); return state.key; },
+    getKey: () => state.key,
+    isReady: () => !stopped && state.ready && !!state.key && Date.now() - state.checkedAt < staleMs,
+    devicePersisted: persisted, getHealth: () => state.health };
 }
-
-const getKey = () => state.key;
-const isReady = () => state.ready;
-
-module.exports = {
-  start,
-  stop,
-  wait,
-  ensureKey,
-  getKey,
-  isReady,
-  restoreKeyBackup,
-  devicePersisted,
-};
+module.exports = { ...createSupervisor(), createSupervisor };

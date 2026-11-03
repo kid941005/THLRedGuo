@@ -1,24 +1,16 @@
-# 构建上下文只需要 server/ 与一个数据源脚本，其余全部排除
-.git
-.github
-android
-ios
-macos
-windows
-tvos
-packages
-lib
-test
-integration_test
-assets/branding
-assets/screenshots
-assets/video_enhancement
-**/node_modules
-**/*.log
+# Only the runtime server is sent to Docker.
+**
+!server/
+!server/**
 server/vendor/hongguo-web/README.md
+server/vendor/hongguo-web/**/node_modules
 server/vendor/hongguo-web/data
 server/vendor/hongguo-web/download
-
-# 运行期生成的设备身份与缓存：绝不能烤进镜像（镜像会推到公开的 GHCR）
-server/vendor/hongguo-web/server/config/apikeys.json
 server/vendor/hongguo-web/server/stream-cache
+server/vendor/hongguo-web/server/config/apikeys.json
+server/vendor/hongguo-web/server/src/server
+server/**/*.log
+server/**/playback-device.json
+server/**/playback-device.json.tmp
+server/**/*.sqlite*
+server/**/setup-token

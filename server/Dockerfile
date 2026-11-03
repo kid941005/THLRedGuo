@@ -1,4 +1,4 @@
-# 红果网关镜像
+# 红果 Docker 网页版镜像
 #
 # 构建（在仓库根目录执行）：
 #   docker build -f server/Dockerfile -t thlredguo-gateway .
@@ -11,7 +11,10 @@
 #  - 只暴露 8080；内置服务仅在容器内 127.0.0.1:8000 监听
 #  - 不使用多阶段构建：无编译产物、无第三方 npm 依赖
 
-FROM node:20-alpine
+FROM node:24-alpine
+
+# Required for tail-moov remux and optional H.264 browser transcoding.
+RUN apk add --no-cache ffmpeg
 
 ENV NODE_ENV=production \
     PORT=8080 \
@@ -21,13 +24,13 @@ ENV NODE_ENV=production \
     HONGGUO_STREAM_CACHE=/app/data/stream-cache \
     CACHE_TTL_MIN=180 \
     CACHE_MAX_MB=2048 \
+    HONGGUO_CACHE_MAX_FILES=0 \
     TZ=Asia/Shanghai
 
 WORKDIR /app
 
-# 网关与数据源脚本
+# 网页、网关与内置取流服务
 COPY server/ /app/server/
-COPY assets/sources/hongguo_gw.js /app/assets/sources/hongguo_gw.js
 
 # 兜底：即使 .dockerignore 被绕过，也不让本地运行期生成的设备身份/密钥进入镜像
 # （镜像会推到公开的 GHCR，这种文件一旦进去等于泄露 device_id 与 api key）

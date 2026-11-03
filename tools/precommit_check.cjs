@@ -32,7 +32,9 @@ const MODE_ALL = ARGS.has('--all');
 
 const FORBIDDEN_PATH = [
   { pattern: /(^|\/)apikeys\.json$/, why: '运行期生成的本地密钥，绝不可入库' },
-  { pattern: /(^|\/)\.env(\.|$)/, why: '环境变量文件可能含密钥' },
+  { pattern: /(^|\/)playback-device\.json(?:\.tmp)?$/, why: '播放设备身份不应入库' },
+  { pattern: /(?:\.sqlite(?:-wal|-shm)?$|(?:^|\/)setup-token$)/, why: '账号数据库和初始化口令不应入库' },
+  { pattern: /(^|\/)\.env(?:$|\.(?!(?:example|sample|template)$))/, why: '环境变量文件可能含密钥' },
   { pattern: /\.(pem|p12|pfx|jks|keystore)$/i, why: '证书 / 密钥库文件' },
   { pattern: /(^|\/)id_(rsa|ed25519)$/, why: 'SSH 私钥' },
   { pattern: /(^|\/)stream-cache\//, why: '解密缓存属于运行期产物' },
@@ -65,15 +67,27 @@ function git(args, opts = {}) {
 }
 
 const rootRes = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
-if (rootRes.status !== 0) {
-  console.error('precommit_check: 不在 git 仓库内');
+if (rootRes.status !== 0 && !MODE_ALL) {
+  console.error('precommit_check: 暂存区检查需要 Git 仓库；源码快照请使用 --all');
   process.exit(2);
 }
-const ROOT = rootRes.stdout.trim();
+const ROOT = rootRes.status === 0 ? rootRes.stdout.trim() : path.resolve(__dirname, '..');
+
+function snapshotFiles(dir = ROOT) {
+  const files = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (['.git', 'node_modules', 'audit', 'coverage'].includes(entry.name)) continue;
+    const absolute = path.join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...snapshotFiles(absolute));
+    else if (entry.isFile()) files.push(path.relative(ROOT, absolute).split(path.sep).join('/'));
+  }
+  return files;
+}
 
 /** 收集待检查文件（相对仓库根，POSIX 分隔符） */
 function collectFiles() {
   if (MODE_ALL) {
+    if (rootRes.status !== 0) return snapshotFiles();
     const res = git(['ls-files', '-z']);
     return res.stdout.split('\0').filter(Boolean);
   }
@@ -103,7 +117,7 @@ function isText(buf) {
 }
 
 function findPython() {
-  for (const cmd of ['python3', 'python', 'py']) {
+  for (const cmd of [process.env.PYTHON, 'python3', 'python', 'py'].filter(Boolean)) {
     const res = spawnSync(cmd, ['-c', 'import yaml,sys;sys.stdout.write("ok")'], {
       encoding: 'utf8',
     });

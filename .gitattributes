@@ -1,14 +1,9 @@
 * text=auto
-*.dart text eol=lf
-*.py text eol=lf
+*.js text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
-*.ps1 text eol=crlf
-android/gradlew text eol=lf
-*.png binary
-*.ico binary
-*.jar binary
-
-# 钩子与 shell 脚本必须是 LF，否则 Linux/macOS 上 shebang 带 CR 会直接执行失败
+*.md text eol=lf
 *.sh text eol=lf
 .githooks/* text eol=lf

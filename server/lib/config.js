@@ -10,14 +10,9 @@ const path = require('path');
 
 const PORT = Number(process.env.PORT || 8080);
 const HK_PORT = Number(process.env.HK_PORT || 8000);
-const PUBLIC_BASE = (process.env.PUBLIC_BASE || '').replace(/\/+$/, '');
-const QUALITY = process.env.HK_QUALITY || 'best';
 
 /** 内置服务地址（仅本机回环，不对外） */
 const UPSTREAM = `http://127.0.0.1:${HK_PORT}`;
-
-/** 仓库内的两份资源：下发的 spider 与第三方服务入口 */
-const SPIDER_FILE = path.join(__dirname, '..', '..', 'assets', 'sources', 'hongguo_gw.js');
 
 /** 内置网页界面（单文件，无构建步骤、无外链依赖） */
 const WEB_INDEX = path.join(__dirname, '..', 'web', 'index.html');
@@ -35,8 +30,7 @@ const VENDOR_ROOT = path.resolve(path.dirname(VENDOR_ENTRY), '..', '..');
 /**
  * 内置服务把设备身份（device_id）与 api key 写在 server/config/apikeys.json，
  * 该路径固定相对 vendor 根目录，**不受 HONGGUO_DATA_DIR 影响**。
- * 容器重建会丢掉镜像层里的这个文件 → device_id 变化 → 更容易被上游风控，
- * 所以网关把它备份到数据目录，下次启动再还原。
+ * 旧版本的这个路径仅用于迁移；新版本通过 HONGGUO_KEY_FILE 直接写入数据卷。
  */
 const VENDOR_KEY_FILE = path.join(VENDOR_ROOT, 'server', 'config', 'apikeys.json');
 
@@ -53,10 +47,7 @@ const CACHE_SWEEP_SEC = Number(process.env.CACHE_SWEEP_SEC || 300);
 module.exports = {
   PORT,
   HK_PORT,
-  PUBLIC_BASE,
-  QUALITY,
   UPSTREAM,
-  SPIDER_FILE,
   WEB_INDEX,
   VENDOR_ENTRY,
   VENDOR_ROOT,

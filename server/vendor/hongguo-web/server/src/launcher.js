@@ -87,12 +87,11 @@ async function main(args = process.argv.slice(2)) {
     : (ServerMod.Server || ServerMod.default);
   const server = new Server();
   const boot = server.ensureBootstrap();
-  if (boot !== null && boot !== undefined) Log.info('已签发本地链路密钥   ' + boot);
+  if (boot !== null && boot !== undefined) Log.info('内部链路密钥已初始化');
   // 管理口令只在首次自动生成时输出：此时已写入 apikeys.json，
   // 重启沿用同一口令，不再重复打扰；环境变量显式设置时同样不输出。
   if (server.adminTokenFresh()) {
-    Log.info('管理口令(ADMIN_TOKEN) ' + server.adminToken()
-      + '（已写入 server/config/apikeys.json，重启沿用）');
+    Log.info('管理凭据已写入设备身份文件，重启沿用');
   }
 
   await server.start(bindHost, apiPort);

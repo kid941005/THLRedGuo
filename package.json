@@ -1,0 +1,16 @@
+{
+  "name": "thlredguo-docker",
+  "version": "1.4.0",
+  "private": true,
+  "description": "THLRedGuo Docker browser interface and playback service",
+  "scripts": {
+    "start": "node server/gateway.js",
+    "check": "node tools/precommit_check.cjs --all",
+    "test": "node --test",
+    "test:vendor": "node tools/vendor_selftest.cjs",
+    "test:container": "node tools/container_smoke.cjs"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

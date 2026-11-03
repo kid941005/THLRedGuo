@@ -100,6 +100,33 @@
     padding: 10px 16px; border-radius: 10px; max-width: 90vw; z-index: 60; display: none;
   }
   .toast.show { display: block; }
+  [hidden] { display: none !important; }
+  input:not([type="checkbox"]), select { padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--txt); max-width: 100%; }
+  input[type="checkbox"] { accent-color: var(--accent); }
+  label { display: inline-flex; gap: 8px; align-items: center; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; align-items: center; }
+  .toolbar button.active { border-color: var(--accent); color: var(--accent); }
+  .stack { display: grid; gap: 12px; }
+  .stack form { display: grid; min-width: 0; max-width: none; }
+  .auth-screen { position: fixed; inset: 0; z-index: 100; background: var(--bg); display: grid; place-items: center; padding: 24px; }
+  .auth-box { width: min(440px,100%); padding: 28px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+  .auth-box form { display: grid; max-width: none; min-width: 0; }
+  .auth-box label { display: grid; gap: 6px; }
+  .muted { color: var(--dim); font-size: 13px; }
+  .error { color: #fda4af; white-space: pre-wrap; }
+  .task { border: 1px solid var(--line); padding: 12px; border-radius: 10px; }
+  .task .toolbar { padding: 8px 0 0; }
+  .picks { display: flex; flex-wrap: wrap; gap: 10px; max-height: 180px; overflow: auto; margin-top: 10px; }
+  .picks label { padding: 6px; background: var(--panel-2); border-radius: 6px; }
+  progress { width: 100%; accent-color: var(--accent); }
+  #panel-body { margin-top: 16px; }
+  h2,h3 { line-height: 1.4; }
+  .wide { width: 100%; }
+  a { color: #fda4af; }
+  button:disabled { opacity: .55; cursor: wait; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  @media(max-width:600px) { .sheet { padding: 6px; } .sheet-head img { width: 76px; } header { gap: 8px; } }
+
 </style>
 </head>
 <body>
@@ -109,9 +136,15 @@
     <input id="q" type="search" placeholder="搜索剧名，如：霸总 / 归路" autocomplete="off">
     <button type="submit">搜索</button>
   </form>
-  <a href="/healthz" target="_blank" rel="noreferrer"><button type="button">状态</button></a>
+  <button id="account-btn" type="button">账号</button>
+  <span id="user-label" class="muted"></span>
 </header>
 
+<div class="toolbar" id="sections">
+  <button id="nav-catalog" type="button">剧库</button><button id="nav-favorites" type="button">我的追剧</button>
+  <button id="nav-history" type="button">观看历史</button><button id="nav-downloads" type="button">下载任务</button>
+  <button id="nav-admin" type="button" hidden>管理后台</button>
+</div>
 <nav id="tabs"></nav>
 <main id="grid"></main>
 <div id="more" hidden><button id="more-btn">加载更多</button></div>
@@ -127,11 +160,31 @@
       </div>
       <button class="close" id="d-close">关闭</button>
     </div>
+    <div class="toolbar">
+      <label>追剧状态 <select id="d-favorite"><option value="">未收藏</option><option value="want">想看</option><option value="watching">在看</option><option value="completed">已看完</option></select></label>
+      <button id="d-resume" type="button" hidden>继续观看</button>
+      <label><input id="autoplay" type="checkbox" checked>自动连播</label>
+    </div>
     <video id="d-video" controls playsinline preload="none" hidden></video>
+    <p id="d-status" role="status" aria-live="polite"></p>
+    <div class="toolbar"><button id="player-prev" type="button" disabled>上一集</button><button id="player-retry" type="button" hidden>重试当前集</button><button id="player-next" type="button" disabled>下一集</button><span id="preload-status" class="muted"></span></div>
     <div class="eps" id="d-eps"></div>
+    <details id="batch-box"><summary>批量下载到服务器</summary>
+      <div class="toolbar"><button id="pick-all" type="button">全选</button><button id="pick-none" type="button">清空选择</button>
+        <button id="download-selected" type="button">加入下载队列</button><span id="pick-count" class="muted"></span></div>
+      <p class="muted">每次最多选择 200 集；准备完成后可在下载任务中保存单集，或合并为 ZIP。</p><div id="d-picks" class="picks"></div>
+    </details>
   </div>
 </div>
 
+<div id="panel" class="sheet"><div class="sheet-inner"><div class="sheet-head"><h2 id="panel-title"></h2><button id="panel-close" class="close" type="button">关闭</button></div><div id="panel-body" class="stack"></div></div></div>
+<div id="auth" class="auth-screen"><div class="auth-box stack">
+  <h1 id="auth-title">登录红果剧库</h1><p id="auth-help" class="muted">使用管理员创建的账号登录。</p>
+  <form id="auth-form"><label>用户名<input id="auth-username" autocomplete="username" minlength="3" maxlength="32" required></label>
+    <label>密码<input id="auth-password" type="password" autocomplete="current-password" minlength="10" maxlength="128" required></label>
+    <label id="setup-label" hidden>初始化口令<input id="auth-token" autocomplete="off"></label>
+    <button id="auth-submit" type="submit">登录</button></form><p id="auth-error" class="error" role="alert"></p>
+</div></div>
 <div id="toast" class="toast"></div>
 
 <script>
@@ -162,12 +215,25 @@
     desc: document.getElementById('d-desc'),
     meta: document.getElementById('d-meta'),
     video: document.getElementById('d-video'),
+    playerStatus: document.getElementById('d-status'),
     eps: document.getElementById('d-eps'),
     close: document.getElementById('d-close'),
-    toast: document.getElementById('toast')
+    toast: document.getElementById('toast'),
+    favorite: document.getElementById('d-favorite'), resume: document.getElementById('d-resume'),
+    autoplay: document.getElementById('autoplay'), picks: document.getElementById('d-picks'), pickCount: document.getElementById('pick-count')
   };
 
-  var state = { tab: TABS[0], keyword: '', offset: 0, hasMore: false, loading: false };
+  var state = { tab: TABS[0], keyword: '', offset: 0, hasMore: false, loading: false, seen: [] };
+  var listSequence = 0, detailSequence = 0, playSequence = 0;
+  var listRequest, detailRequest, playRequest;
+  var currentUser = null, csrf = '', setupRequired = false, view = 'catalog';
+  var currentSeries = null, currentEpisodes = [], savedLibrary = null, playback = null, selectedEpisodes = new Set();
+  var panelKind = '', taskSelections = new Set(), panelSequence = 0, librarySequence = 0;
+  var progressWarningAt = 0;
+  var selectedEpisode = null, retryTimer = null, preloadRequest = null, preloadedVid = '', preloadBusy = false;
+  var playerRate = 1, playerVolume = 1, playerMuted = false;
+  var byId = function (id) { return document.getElementById(id); };
+
 
   function toast(msg) {
     el.toast.textContent = msg;
@@ -176,8 +242,16 @@
     toast._t = setTimeout(function () { el.toast.classList.remove('show'); }, 4200);
   }
 
-  function api(path) {
-    return fetch(path, { headers: { Accept: 'application/json' } }).then(function (r) {
+  function api(path, signal, options) {
+    options = options || {};
+    var requestIdentity = csrf;
+    var request = new AbortController();
+    function cancelled() { request.abort(); }
+    if (signal) { signal.addEventListener('abort', cancelled, { once: true }); if (signal.aborted) request.abort(); }
+    var timedOut = false;
+    var timer = setTimeout(function () { timedOut = true; request.abort(); }, 15000);
+    return fetch(path, { method: options.method || 'GET', headers: Object.assign({ Accept: 'application/json' }, options.body === undefined ? {} : { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }), body: options.body === undefined ? undefined : JSON.stringify(options.body), signal: request.signal, keepalive: !!options.keepalive }).then(function (r) {
+      if (r.status === 401 && currentUser && requestIdentity === csrf) showAuth();
       if (!r.ok) {
         return r.text().then(function (t) {
           var detail = '';
@@ -186,14 +260,18 @@
         });
       }
       return r.json();
-    });
+    }).catch(function (e) {
+      if (timedOut) throw new Error('请求超时，请检查网关状态后重试。');
+      throw e;
+    }).finally(function () { clearTimeout(timer); if (signal) signal.removeEventListener('abort', cancelled); });
   }
 
-  /** 上游被风控时接口结构正常但列表为空，必须和后端故障区分开 */
-  function emptyHint(where) {
-    return '<div class="note">' + where + '没有数据。<br><b>如果刚才还能用</b>，多半是上游风控：' +
-      '同一出口 IP 请求过于频繁，或设备身份被拒。稍等片刻再试，' +
-      '或把容器出口换成更稳定的 IP。</div>';
+  function note(target, text) {
+    target.innerHTML = '';
+    var message = document.createElement('div');
+    message.className = 'note';
+    message.textContent = text;
+    target.appendChild(message);
   }
 
   function card(item, index) {
@@ -229,6 +307,8 @@
     if (item.episode_cnt) bits.push(item.episode_cnt + ' 集');
     if (item.score) bits.push('评分 ' + item.score);
     if (item.copyright) bits.push(item.copyright);
+    if (item.status) bits.push(({want:'想看',watching:'在看',completed:'已看完'})[item.status] || '');
+    if (item.vid) bits.push('看到第 ' + item.episode + ' 集 · ' + formatTime(item.position));
     sub.textContent = bits.join(' · ') || '\u00a0';
     meta.appendChild(t);
     meta.appendChild(sub);
@@ -236,6 +316,11 @@
     box.appendChild(pic);
     box.appendChild(meta);
     box.addEventListener('click', function () { openDetail(item); });
+    if (view === 'history' || view === 'favorites') {
+      var remove = document.createElement('button'); remove.type = 'button'; remove.textContent = view === 'history' ? '删除记录' : '取消追剧';
+      remove.addEventListener('click', function (event) { event.stopPropagation(); var route = view === 'history' ? '/api/history/' : '/api/favorites/'; mutate(route + item.series_id, {}, 'DELETE').then(function () { showLibrary(view); }).catch(report); });
+      meta.appendChild(remove);
+    }
     return box;
   }
 
@@ -249,7 +334,7 @@
     TABS.forEach(function (tab) {
       var b = document.createElement('button');
       b.textContent = tab.name;
-      b.setAttribute('aria-selected', String(tab.id === state.tab.id));
+      b.setAttribute('aria-selected', String(!state.keyword && tab.id === state.tab.id));
       b.addEventListener('click', function () {
         if (state.tab.id === tab.id && !state.keyword) return;
         state.tab = tab;
@@ -262,37 +347,53 @@
   }
 
   function load(reset) {
-    if (state.loading) return;
+    if (!currentUser || view !== 'catalog') return;
+    if (state.loading && !reset) return;
+    if (listRequest) listRequest.abort();
+    listRequest = new AbortController();
+    var ticket = ++listSequence;
     state.loading = true;
-    if (reset) { state.offset = 0; el.more.hidden = true; }
+    if (reset) { state.offset = 0; state.seen = []; el.more.hidden = true; }
+    setTabs();
     el.grid.setAttribute('aria-busy', 'true');
+    var offset = state.offset;
 
     var url;
     if (state.keyword) {
       url = '/gw/search?q=' + encodeURIComponent(state.keyword) +
         '&limit=' + PAGE + '&offset=' + state.offset;
     } else if (state.tab.kind === 'rank') {
-      url = '/gw/rank?board=' + encodeURIComponent(state.tab.board) + '&limit=30';
+      url = '/gw/rank?board=' + encodeURIComponent(state.tab.board) + '&limit=' + PAGE + '&offset=' + offset;
     } else {
       url = '/gw/browse?genre=' + encodeURIComponent(state.tab.genre) +
-        '&limit=' + PAGE + '&offset=' + state.offset;
+        '&limit=' + PAGE + '&offset=' + offset + '&seen=' + encodeURIComponent(state.seen.slice(-200).join(','));
     }
 
-    api(url).then(function (data) {
+    api(url, listRequest.signal).then(function (data) {
+      if (ticket !== listSequence) return;
       var items = data.items || data.results || [];
       if (reset && items.length === 0) {
-        el.grid.innerHTML = emptyHint(state.keyword ? '搜索' : '这个分类');
+        note(el.grid, '没有返回数据。可更换关键词或稍后重试；空列表无法单独判断故障原因。');
         el.more.hidden = true;
         return;
       }
-      render(items, !reset);
-      state.offset += items.length;
-      state.hasMore = data.has_more === true;
+      var fresh = items.filter(function (item) {
+        var id = String(item.series_id || '');
+        if (!id || state.seen.indexOf(id) >= 0) return false;
+        state.seen.push(id);
+        return true;
+      });
+      render(fresh, !reset);
+      var next = Number(data.next_offset);
+      state.offset = Number.isFinite(next) && next > offset ? next : offset + items.length;
+      state.hasMore = data.has_more === true && state.offset > offset;
       el.more.hidden = !state.hasMore;
     }).catch(function (e) {
-      if (reset) el.grid.innerHTML = '<div class="note">加载失败：' + e.message + '</div>';
+      if (ticket !== listSequence || e.name === 'AbortError') return;
+      if (reset) note(el.grid, '加载失败：' + e.message);
       toast('请求失败：' + e.message);
     }).then(function () {
+      if (ticket !== listSequence) return;
       state.loading = false;
       el.grid.removeAttribute('aria-busy');
     });
@@ -300,6 +401,14 @@
 
   /** 打开详情：先拿分集，再按需起播 */
   function openDetail(item) {
+    if (detailRequest) detailRequest.abort();
+    detailRequest = new AbortController();
+    var ticket = ++detailSequence;
+    saveProgress(false);
+    resetPlayer();
+    currentSeries = item; currentEpisodes = []; savedLibrary = null; selectedEpisodes.clear();
+    selectedEpisode = null; updatePlayerButtons();
+    el.picks.innerHTML = ''; updatePickCount(); el.favorite.value = ''; el.favorite.disabled = false; el.resume.hidden = true;
     el.sheet.classList.add('open');
     el.title.textContent = item.title || '';
     el.desc.textContent = item.abstract || '（暂无简介）';
@@ -314,13 +423,21 @@
     el.video.hidden = true;
     el.video.removeAttribute('src');
 
-    api('/gw/episodes?series_id=' + encodeURIComponent(item.series_id))
-      .then(function (data) {
+    Promise.all([api('/gw/episodes?series_id=' + encodeURIComponent(item.series_id), detailRequest.signal), api('/api/library/' + item.series_id, detailRequest.signal)])
+      .then(function (responses) {
+        if (ticket !== detailSequence) return;
+        var data = responses[0]; savedLibrary = responses[1];
+        el.favorite.value = savedLibrary.favorite;
+        var recent = savedLibrary.recent; el.resume.hidden = !recent;
+        if (recent) el.resume.textContent = '继续第 ' + recent.episode + ' 集 · ' + formatTime(recent.position);
+
+        if (ticket !== detailSequence) return;
         var episodes = data.episodes || [];
         if (!episodes.length) {
-          el.eps.innerHTML = '<div class="note">这部剧没有取到分集（可能已下架或被风控）。</div>';
+          note(el.eps, '这部剧没有返回分集，请稍后重试。');
           return;
         }
+        currentEpisodes = episodes;
         el.eps.innerHTML = '';
         episodes.forEach(function (ep, i) {
           var b = document.createElement('button');
@@ -330,31 +447,195 @@
               c.setAttribute('aria-current', 'false');
             });
             b.setAttribute('aria-current', 'true');
-            playEpisode(ep);
+            playEpisode(ep).catch(report);
           });
           el.eps.appendChild(b);
+          var label = document.createElement('label'), checkbox = document.createElement('input');
+          checkbox.type = 'checkbox'; checkbox.value = String(ep.index || i + 1);
+          checkbox.addEventListener('change', function () { if (checkbox.checked) selectedEpisodes.add(Number(checkbox.value)); else selectedEpisodes.delete(Number(checkbox.value)); updatePickCount(); });
+          label.appendChild(checkbox); var text = document.createElement('span'); text.textContent = '第 ' + (ep.index || i + 1) + ' 集'; label.appendChild(text); el.picks.appendChild(label);
+          var progress = (savedLibrary.episodes || []).find(function (entry) { return entry.vid === String(ep.vid); });
+          if (progress) b.title = progress.completed ? '已看完' : '续播 ' + formatTime(progress.position);
+
         });
       })
       .catch(function (e) {
-        el.eps.innerHTML = '<div class="note">读取分集失败：' + e.message + '</div>';
+        if (ticket !== detailSequence || e.name === 'AbortError') return;
+        note(el.eps, '读取分集失败：' + e.message);
       });
   }
 
-  function playEpisode(ep) {
-    var url = '/gw/stream?vid=' + encodeURIComponent(ep.vid) + '&quality=best';
-    el.video.hidden = false;
-    el.video.src = url;
-    el.video.play().catch(function () { /* 自动播放被拦截时交给用户点播放 */ });
-    el.video.onerror = function () {
-      toast('这一集取流失败：网关没能从上游拿到片子（常见于风控），可稍后重试或换一集。');
-    };
-  }
-
-  el.close.addEventListener('click', function () {
-    el.sheet.classList.remove('open');
+  function resetPlayer() {
+    playback = null;
+    clearTimeout(retryTimer); retryTimer = null;
+    if (preloadRequest) preloadRequest.abort();
+    preloadRequest = null; preloadBusy = false; preloadedVid = '';
+    byId('preload-status').textContent = '';
+    el.video.onloadedmetadata = null;
+    el.video.onseeked = null;
+    el.video.onerror = null;
+    playSequence++;
+    if (playRequest) playRequest.abort();
     el.video.pause();
     el.video.removeAttribute('src');
     el.video.load();
+    el.video.hidden = true;
+    el.playerStatus.textContent = '';
+    byId('player-retry').hidden = true;
+  }
+
+  function pause(ms, signal) {
+    return new Promise(function (resolve, reject) {
+      function aborted() { clearTimeout(timer); signal.removeEventListener('abort', aborted); reject(new DOMException('Cancelled', 'AbortError')); }
+      var timer = setTimeout(function () { signal.removeEventListener('abort', aborted); resolve(); }, ms);
+      signal.addEventListener('abort', aborted, { once: true });
+      if (signal.aborted) aborted();
+    });
+  }
+
+  async function playEpisode(ep, options) {
+    options = options || {};
+    var intent = ++playSequence;
+    saveProgress(false);
+    if (intent !== playSequence || !currentUser) return;
+    resetPlayer();
+    selectedEpisode = ep; updatePlayerButtons();
+    Array.prototype.forEach.call(el.eps.children, function (button, index) { button.setAttribute('aria-current', String(currentEpisodes[index] && String(currentEpisodes[index].vid) === String(ep.vid))); });
+    playRequest = new AbortController();
+    var signal = playRequest.signal;
+    var ticket = playSequence;
+    var url = '/gw/stream?vid=' + encodeURIComponent(ep.vid) + '&quality=best' + (options.recovery ? '&recovery=' + options.recovery : '');
+    el.playerStatus.textContent = '正在准备这一集，首次加载需要下载和解密，请稍候…';
+    try {
+      var deadline = Date.now() + 240000;
+      var first = true, transientFailures = 0, polls = 0;
+      while (true) {
+        if (Date.now() >= deadline) throw new Error('准备超过四分钟，可稍后重试；尚未取得可播放媒体。');
+        var prepared;
+        try {
+          prepared = await api('/gw/prepare?vid=' + encodeURIComponent(ep.vid) + '&quality=best' + (first ? '&retry=1' : ''), signal);
+          transientFailures = 0;
+        } catch (error) {
+          if (signal.aborted || !currentUser || ++transientFailures > 3) throw error;
+          el.playerStatus.textContent = '连接暂时中断，正在重新连接…';
+          await pause(1000 * transientFailures, signal); continue;
+        }
+        first = false;
+        if (ticket !== playSequence) return;
+        if (prepared.state === 'failed') throw new Error(prepared.error || '媒体准备失败');
+        if (prepared.state === 'ready') break;
+        el.playerStatus.textContent = prepared.stage === 'queued' ? '正在等待取流资源，请稍候…' : '正在下载并准备第 ' + ep.index + ' 集…';
+        await pause(++polls <= 3 ? 400 : 1500, signal);
+      }
+    } catch (e) {
+      if (ticket !== playSequence || e.name === 'AbortError') return;
+      el.playerStatus.textContent = e.message;
+      byId('player-retry').hidden = false;
+      toast(e.message);
+      return;
+    }
+    if (ticket !== playSequence) return;
+    var started;
+    try { started = await mutate('/api/playback/start', { series: currentSeries, vid: String(ep.vid), episode: Number(ep.index) }); }
+    catch (error) { if (ticket === playSequence) { el.playerStatus.textContent = error.message; byId('player-retry').hidden = false; } return; }
+    if (ticket !== playSequence) return;
+    var resumeAt = Number.isFinite(options.position) ? options.position : started.position;
+    playback = { id: started.playbackId, sequence: 0, lastSave: 0, ready: false, episode: ep, series: currentSeries, ticket: ticket,
+      position: resumeAt, retries: options.recovery || 0, wantsPlay: options.paused !== true, lastAdvance: Date.now(), lastObserved: resumeAt, recovering: false, lastLease: Date.now() };
+    el.video.onloadedmetadata = function () {
+      if (!playback || playback.ticket !== ticket) return;
+      el.video.playbackRate = playerRate; el.video.volume = playerVolume; el.video.muted = playerMuted;
+      if (Number.isFinite(el.video.duration) && el.video.duration > 0 && resumeAt > 0) {
+        playback.ready = false;
+        el.video.onseeked = function () { if (playback && playback.ticket === ticket) { playback.ready = true; playback.position = el.video.currentTime; } };
+        el.video.currentTime = Math.min(resumeAt, Math.max(0, el.video.duration - 0.2));
+      } else playback.ready = true;
+    };
+    el.playerStatus.textContent = '第 ' + ep.index + ' 集 · ' + (resumeAt > 0 ? '从 ' + formatTime(resumeAt) + ' 继续观看。' : '已准备');
+    el.video.hidden = false;
+    el.video.preload = 'auto';
+    el.video.src = url;
+    if (options.paused !== true) el.video.play().catch(function (error) {
+      if (ticket !== playSequence || error.name === 'AbortError') return;
+      if (error.name === 'NotAllowedError') { playback.wantsPlay = false; el.playerStatus.textContent = '浏览器需要手动操作，请点击视频播放。'; }
+    });
+    el.video.onerror = async function () {
+      if (ticket !== playSequence) return;
+      var code = el.video.error && el.video.error.code;
+      if (code === 1) return;
+      if (code === 3 || code === 4) {
+        try {
+          var check = await fetch(url, { headers: { Range: 'bytes=0-0' }, signal: AbortSignal.timeout(5000), cache: 'no-store' });
+          if (check.body) await check.body.cancel();
+          if (ticket !== playSequence) return;
+          if (check.status === 401) { showAuth(); return; }
+          if (!check.ok) { recoverPlayback('媒体请求失败 HTTP ' + check.status); return; }
+        } catch (_) { if (ticket === playSequence) recoverPlayback('媒体连接中断'); return; }
+        if (playback && playback.retries < 1) { recoverPlayback('媒体加载异常'); return; }
+        el.playerStatus.textContent = '当前浏览器无法解码此媒体。可重试；若持续失败，请在服务器开启 HG_TRANSCODE=1。';
+        byId('player-retry').hidden = false; return;
+      }
+      recoverPlayback('网络读取中断');
+    };
+  }
+
+  function updatePlayerButtons() {
+    var index = currentEpisodes.findIndex(function (entry) { return selectedEpisode && String(entry.vid) === String(selectedEpisode.vid); });
+    byId('player-prev').disabled = index <= 0; byId('player-next').disabled = index < 0 || index >= currentEpisodes.length - 1;
+  }
+  function recoverPlayback(reason) {
+    var record = playback;
+    if (!record || record.recovering) return;
+    if (record.retries >= 2) { el.playerStatus.textContent = reason + '，自动恢复未成功。请检查网络后重试。'; byId('player-retry').hidden = false; return; }
+    record.recovering = true;
+      var position = record.ready && el.video.readyState >= 1 && Number.isFinite(el.video.currentTime) ? el.video.currentTime : record.position;
+    var paused = !record.wantsPlay, attempts = record.retries + 1;
+    saveProgress(false); el.video.pause();
+    el.playerStatus.textContent = reason + '，正在保留进度恢复（' + attempts + '/2）…';
+    retryTimer = setTimeout(function () {
+      if (playback !== record || record.ticket !== playSequence || !currentUser) return;
+      playEpisode(record.episode, { position: position, recovery: attempts, paused: paused }).catch(report);
+    }, attempts * 1000);
+  }
+  function prepareNext() {
+    var record = playback;
+    if (!record || !record.ready || !el.autoplay.checked || el.video.paused || document.hidden || preloadBusy || Date.now() < (record.nextPreloadAt || 0)) return;
+    var remaining = (el.video.duration - el.video.currentTime) / Math.max(0.25, el.video.playbackRate || 1);
+    if (!Number.isFinite(remaining) || remaining > 25 || remaining <= 0) return;
+    var index = currentEpisodes.findIndex(function (entry) { return String(entry.vid) === String(record.episode.vid); });
+    var next = currentEpisodes[index + 1]; if (!next || preloadedVid === String(next.vid)) return;
+    preloadBusy = true; record.nextPreloadAt = Date.now() + 2000; preloadRequest = new AbortController(); var signal = preloadRequest.signal;
+    api('/gw/prepare?vid=' + encodeURIComponent(next.vid) + '&quality=best&background=1', signal).then(function (result) {
+      if (playback !== record || signal.aborted) return;
+      if (result.state === 'ready') { preloadedVid = String(next.vid); byId('preload-status').textContent = '下一集已准备'; }
+      else if (result.state === 'failed') { preloadedVid = String(next.vid); byId('preload-status').textContent = '下一集将在切集时重试'; }
+      else byId('preload-status').textContent = '正在准备下一集';
+    }).catch(function () {}).finally(function () { if (playback === record) preloadBusy = false; });
+  }
+  byId('player-prev').addEventListener('click', function () { var index = currentEpisodes.findIndex(function (ep) { return selectedEpisode && String(ep.vid) === String(selectedEpisode.vid); }); if (currentEpisodes[index - 1]) playEpisode(currentEpisodes[index - 1]).catch(report); });
+  byId('player-next').addEventListener('click', function () { var index = currentEpisodes.findIndex(function (ep) { return selectedEpisode && String(ep.vid) === String(selectedEpisode.vid); }); if (currentEpisodes[index + 1]) playEpisode(currentEpisodes[index + 1]).catch(report); });
+  byId('player-retry').addEventListener('click', function () { if (selectedEpisode) playEpisode(selectedEpisode, { position: playback ? playback.position : undefined }).catch(report); });
+  el.video.addEventListener('ratechange', function () { if (playback && playback.ready) playerRate = el.video.playbackRate; });
+  el.video.addEventListener('volumechange', function () { playerVolume = el.video.volume; playerMuted = el.video.muted; });
+  el.video.addEventListener('playing', function () { if (playback) { playback.wantsPlay = true; playback.lastAdvance = Date.now(); el.playerStatus.textContent = '正在播放第 ' + playback.episode.index + ' 集'; byId('player-retry').hidden = true; } });
+  el.video.addEventListener('waiting', function () { if (playback && !playback.recovering) el.playerStatus.textContent = '正在缓冲第 ' + playback.episode.index + ' 集…'; });
+  el.video.addEventListener('seeking', function () { if (playback) playback.lastAdvance = Date.now(); });
+  setInterval(function () {
+    var record = playback; if (!record || !currentUser || (document.hidden && el.video.paused)) return;
+    if (Date.now() - record.lastLease > 20000) {
+      record.lastLease = Date.now(); api('/gw/prepare?vid=' + encodeURIComponent(record.episode.vid) + '&quality=best').catch(function () {});
+    }
+    if (!document.hidden && !record.ready && record.wantsPlay && !record.recovering && Date.now() - record.lastAdvance > 30000) recoverPlayback('视频加载超时');
+    if (!document.hidden && record.ready && record.wantsPlay && !record.recovering && !el.video.ended && !el.video.paused && !el.video.seeking && Date.now() - record.lastAdvance > 25000) recoverPlayback('播放长时间未前进');
+    prepareNext();
+  }, 5000);
+
+  el.close.addEventListener('click', function () {
+    saveProgress(false, true);
+    detailSequence++;
+    if (detailRequest) detailRequest.abort();
+    el.sheet.classList.remove('open');
+    resetPlayer();
   });
   el.sheet.addEventListener('click', function (e) {
     if (e.target === el.sheet) el.close.click();
@@ -364,6 +645,7 @@
     e.preventDefault();
     var kw = el.q.value.trim();
     if (!kw) return;
+    view = 'catalog'; byId('tabs').hidden = false;
     state.keyword = kw;
     load(true);
   });
@@ -380,8 +662,245 @@
       .catch(function () { el.status.className = 'dot bad'; el.status.title = '网关无响应'; });
   }
 
-  setTabs();
-  load(true);
+
+  function formatTime(seconds) {
+    var value = Math.max(0, Math.floor(Number(seconds) || 0));
+    return Math.floor(value / 60) + ':' + String(value % 60).padStart(2, '0');
+  }
+  function bytes(value) { return ((Number(value) || 0) / 1048576).toFixed(1) + ' MB'; }
+  function report(error) { if (error && error.name !== 'AbortError') toast(error.message || String(error)); }
+  function mutate(route, body, method, keepalive) { return api(route, null, { method: method || 'POST', body: body, keepalive: keepalive }); }
+  function node(tag, text, className) {
+    var value = document.createElement(tag); if (text !== undefined) value.textContent = text; if (className) value.className = className; return value;
+  }
+  function action(text, callback) {
+    var button = node('button', text); button.type = 'button';
+    button.addEventListener('click', async function () {
+      button.disabled = true;
+      try { await callback(); } catch (error) { report(error); } finally { button.disabled = false; }
+    }); return button;
+  }
+  function field(form, text, type) {
+    var label = node('label', text), input = node('input'); input.type = type || 'text'; input.required = true;
+    if (type === 'password') { input.minLength = 10; input.maxLength = 128; input.autocomplete = 'new-password'; }
+    label.appendChild(input); form.appendChild(label); return input;
+  }
+  function showAuth() {
+    currentUser = null; csrf = ''; listSequence++; detailSequence++; librarySequence++; panelSequence++;
+    if (listRequest) listRequest.abort(); if (detailRequest) detailRequest.abort(); resetPlayer();
+    currentSeries = null; currentEpisodes = []; savedLibrary = null; selectedEpisodes.clear(); taskSelections.clear();
+    el.grid.innerHTML = ''; el.eps.innerHTML = ''; el.picks.innerHTML = ''; el.title.textContent = ''; el.desc.textContent = ''; el.cover.removeAttribute('src');
+    el.sheet.classList.remove('open'); byId('panel').classList.remove('open'); panelKind = '';
+    byId('auth').hidden = false; byId('user-label').textContent = ''; byId('nav-admin').hidden = true;
+    byId('auth-password').value = ''; byId('auth-error').textContent = '';
+  }
+  function authenticated(data) {
+    currentUser = data.user; csrf = data.csrf; setupRequired = false;
+    byId('auth').hidden = true; byId('auth-token').value = ''; byId('auth-password').value = '';
+    byId('user-label').textContent = currentUser.username + (currentUser.role === 'admin' ? ' · 管理员' : '');
+    byId('nav-admin').hidden = currentUser.role !== 'admin'; el.autoplay.checked = currentUser.autoplay;
+    view = 'catalog'; byId('tabs').hidden = false; state.loading = false; load(true);
+  }
+  async function initAuth() {
+    try {
+      var status = await api('/api/auth/status'); setupRequired = status.setupRequired;
+      byId('setup-label').hidden = !setupRequired; byId('auth-token').required = setupRequired;
+      byId('auth-title').textContent = setupRequired ? '创建管理员' : '登录红果剧库';
+      byId('auth-submit').textContent = setupRequired ? '创建管理员并登录' : '登录';
+      byId('auth-help').textContent = setupRequired ? '首次部署：从容器数据卷读取 setup-token，填写后创建管理员。' : '使用管理员创建的账号登录。';
+      if (!setupRequired) {
+        try { authenticated(await api('/api/auth/me')); } catch (error) { if (error.message.indexOf('401') < 0) byId('auth-error').textContent = error.message; }
+      }
+    } catch (error) { byId('auth-error').textContent = error.message; }
+  }
+  byId('auth-form').addEventListener('submit', async function (event) {
+    event.preventDefault(); byId('auth-submit').disabled = true; byId('auth-error').textContent = '';
+    try {
+      var data = await mutate(setupRequired ? '/api/auth/setup' : '/api/auth/login', {
+        username: byId('auth-username').value.trim(), password: byId('auth-password').value, token: byId('auth-token').value.trim()
+      }); authenticated(data);
+    } catch (error) { byId('auth-error').textContent = error.message; }
+    finally { byId('auth-submit').disabled = false; }
+  });
+  function selectSection(section) {
+    ['catalog','favorites','history','downloads','admin'].forEach(function (name) { byId('nav-' + name).className = section === name ? 'active' : ''; });
+  }
+  async function showLibrary(kind) {
+    if (!currentUser) return;
+    view = kind; selectSection(kind); byId('tabs').hidden = true; el.more.hidden = true;
+    if (listRequest) listRequest.abort(); listSequence++; state.loading = false;
+    var ticket = ++librarySequence;
+    note(el.grid, '正在读取…');
+    try {
+      var data = await api(kind === 'favorites' ? '/api/favorites' : '/api/history');
+      if (view !== kind || ticket !== librarySequence || !currentUser) return;
+      render(data.items, false);
+      if (!data.items.length) note(el.grid, kind === 'favorites' ? '还没有追剧收藏。打开剧集即可添加想看、在看或已看完。' : '开始播放后，这里会保存分集与进度。');
+      if (kind === 'history' && data.items.length) el.grid.appendChild(action('清空观看历史', async function () {
+        if (!window.confirm('清空全部观看历史和续播进度？')) return;
+        await mutate('/api/history', {}, 'DELETE'); await showLibrary('history');
+      }));
+    } catch (error) { if (ticket === librarySequence) note(el.grid, error.message); }
+  }
+  byId('nav-catalog').addEventListener('click', function () { view = 'catalog'; librarySequence++; selectSection('catalog'); byId('tabs').hidden = false; load(true); });
+  byId('nav-favorites').addEventListener('click', function () { showLibrary('favorites'); });
+  byId('nav-history').addEventListener('click', function () { showLibrary('history'); });
+  el.favorite.addEventListener('change', async function () {
+    if (!currentSeries) return;
+    var item = currentSeries, value = el.favorite.value;
+    el.favorite.disabled = true;
+    try {
+      if (value) await mutate('/api/favorites', { series: item, status: value }, 'PUT');
+      else await mutate('/api/favorites/' + item.series_id, {}, 'DELETE');
+      if (currentSeries === item && savedLibrary) savedLibrary.favorite = value;
+      toast(value ? '追剧状态已保存' : '已取消追剧');
+      if (view === 'favorites') showLibrary('favorites');
+    } catch (error) { report(error); if (currentSeries === item && savedLibrary) el.favorite.value = savedLibrary.favorite; }
+    finally { if (currentSeries === item) el.favorite.disabled = false; }
+  });
+  el.autoplay.addEventListener('change', async function () {
+    el.autoplay.disabled = true;
+    try { await mutate('/api/preferences', { autoplay: el.autoplay.checked }, 'PUT'); currentUser.autoplay = el.autoplay.checked; }
+    catch (error) { if (currentUser) el.autoplay.checked = currentUser.autoplay; report(error); }
+    finally { el.autoplay.disabled = false; }
+  });
+  el.resume.addEventListener('click', function () {
+    if (!savedLibrary || !savedLibrary.recent) return;
+    var recent = savedLibrary.recent, index = currentEpisodes.findIndex(function (ep) { return String(ep.vid) === recent.vid; });
+    if (index < 0) { toast('该分集已不在当前列表中，请手动选择。'); return; }
+    if (recent.completed && currentEpisodes[index + 1]) index++;
+    playEpisode(currentEpisodes[index]).catch(report);
+  });
+  async function saveProgress(completed, keepalive) {
+    var record = playback;
+    if (!currentUser || !record || !record.ready || !Number.isFinite(el.video.duration) || el.video.duration <= 0) return;
+    record.completed = record.completed || !!completed;
+    var position = el.video.readyState === 0 && Number.isFinite(record.position) ? record.position : el.video.currentTime;
+    var data = { playbackId: record.id, sequence: record.sequence++, position: Math.max(0, position || 0), duration: el.video.duration, completed: record.completed };
+    record.lastSave = Date.now();
+    try { await mutate('/api/progress', data, 'PUT', keepalive); }
+    catch (error) { if (Date.now() - progressWarningAt > 30000) { progressWarningAt = Date.now(); toast('观看进度未保存：' + error.message); } }
+  }
+  el.video.addEventListener('timeupdate', function () {
+    if (!playback || !playback.ready || el.video.seeking) return;
+    playback.position = el.video.currentTime;
+    if (Math.abs(el.video.currentTime - playback.lastObserved) > 0.05) { playback.lastAdvance = Date.now(); playback.lastObserved = el.video.currentTime; }
+    if (Date.now() - playback.lastSave >= 10000) saveProgress(false);
+    prepareNext();
+  });
+  el.video.addEventListener('pause', function () { if (playback && !playback.recovering && !el.video.ended && !el.video.error) playback.wantsPlay = false; saveProgress(false); });
+  el.video.addEventListener('seeked', function () { saveProgress(false); });
+  el.video.addEventListener('ended', async function () {
+    var record = playback; if (!record) return;
+    saveProgress(true);
+    if (record !== playback || !el.autoplay.checked) return;
+    var index = currentEpisodes.findIndex(function (ep) { return String(ep.vid) === String(record.episode.vid); });
+    if (currentEpisodes[index + 1]) playEpisode(currentEpisodes[index + 1]).catch(report);
+    else el.playerStatus.textContent = '本剧已播放完。';
+  });
+  document.addEventListener('visibilitychange', function () { if (document.hidden) saveProgress(false, true); });
+  window.addEventListener('pagehide', function () { saveProgress(false, true); });
+  function updatePickCount() { el.pickCount.textContent = '已选 ' + selectedEpisodes.size + ' 集'; }
+  byId('pick-all').addEventListener('click', function () {
+    selectedEpisodes = new Set(currentEpisodes.slice(0,200).map(function (ep) { return Number(ep.index); }));
+    Array.prototype.forEach.call(el.picks.children, function (label) { label.children[0].checked = selectedEpisodes.has(Number(label.children[0].value)); }); updatePickCount();
+    if (currentEpisodes.length > 200) toast('每批最多 200 集，已选择前 200 集。');
+  });
+  byId('pick-none').addEventListener('click', function () { selectedEpisodes.clear(); Array.prototype.forEach.call(el.picks.children, function (label) { label.children[0].checked = false; }); updatePickCount(); });
+  byId('download-selected').addEventListener('click', async function () {
+    if (!selectedEpisodes.size) { toast('请先选择分集。'); return; }
+    var button = byId('download-selected'); button.disabled = true;
+    try { var result = await mutate('/api/downloads', { series: currentSeries, episodes: Array.from(selectedEpisodes), quality:'best' }); toast('已加入 ' + result.ids.length + ' 个下载任务'); openPanel('downloads'); }
+    catch (error) { report(error); } finally { button.disabled = false; }
+  });
+  function openPanel(kind) {
+    if (!currentUser) return;
+    panelKind = kind; panelSequence++; byId('panel').classList.add('open');
+    byId('panel-title').textContent = ({downloads:'下载任务',admin:'管理后台',account:'我的账号'})[kind];
+    byId('panel-body').innerHTML = '';
+    if (kind === 'account') renderAccount(); else refreshPanel();
+  }
+  byId('panel-close').addEventListener('click', function () { panelKind = ''; panelSequence++; byId('panel').classList.remove('open'); });
+  byId('nav-downloads').addEventListener('click', function () { openPanel('downloads'); });
+  byId('nav-admin').addEventListener('click', function () { openPanel('admin'); });
+  byId('account-btn').addEventListener('click', function () { openPanel('account'); });
+  function renderAccount() {
+    var target = byId('panel-body'); target.innerHTML = ''; target.appendChild(node('p', currentUser.username + ' · ' + (currentUser.role === 'admin' ? '管理员' : '普通用户')));
+    var form = node('form'), current = field(form,'原密码','password'), next = field(form,'新密码（至少十位）','password');
+    current.autocomplete = 'current-password';
+    var submit = node('button','修改密码并退出所有设备'); submit.type = 'submit'; form.appendChild(submit);
+    form.addEventListener('submit',async function(event){ event.preventDefault(); submit.disabled = true;
+      try { await mutate('/api/auth/password',{currentPassword:current.value,password:next.value}); showAuth(); await initAuth(); toast('密码已修改，请重新登录。'); }
+      catch(error){report(error);} finally {submit.disabled=false;}
+    }); target.appendChild(form);
+    target.appendChild(action('退出登录', async function () { await saveProgress(false); await mutate('/api/auth/logout',{}); showAuth(); await initAuth(); }));
+  }
+  var stateNames = { queued:'排队中', downloading:'准备/下载中', ready:'已完成', failed:'失败', cancelled:'已取消' };
+  function renderTasks(target, jobs, usage, usernames) {
+    target.appendChild(node('p','已使用 ' + bytes(usage.bytes) + ' / ' + bytes(usage.maxBytes),'muted'));
+    var tools = node('div',undefined,'toolbar');
+    tools.appendChild(action('选择已完成',function(){jobs.filter(function(j){return j.state==='ready';}).slice(0,100).forEach(function(j){taskSelections.add(j.id);});refreshPanel();}));
+    tools.appendChild(action('清空选择',function(){taskSelections.clear();refreshPanel();}));
+    var selected = jobs.filter(function(j){return j.state==='ready' && taskSelections.has(j.id);});
+    if (selected.length) { var zip = node('a','合并下载 ZIP（' + selected.length + ' 集）'); zip.href = '/api/downloads/archive?ids=' + encodeURIComponent(selected.map(function(j){return j.id;}).join(',')); zip.setAttribute('download','redguo-episodes.zip'); tools.appendChild(zip); }
+    target.appendChild(tools);
+    if (!jobs.length) target.appendChild(node('p','还没有下载任务。打开剧集，在批量下载中选择分集。','muted'));
+    jobs.forEach(function(job){
+      var row = node('div',undefined,'task'); row.appendChild(node('strong',job.series.title + ' · 第 ' + job.episode + ' 集'));
+      row.appendChild(node('p',(usernames ? '用户：' + (usernames[job.user_id] || job.user_id) + ' · ' : '') + stateNames[job.state] + ' · ' + bytes(job.bytes) + (job.total ? ' / ' + bytes(job.total) : ''),'muted'));
+      if(job.error) row.appendChild(node('p',job.error,'error'));
+      if(job.state==='downloading'){var meter=node('progress');if(job.total){meter.value=job.bytes;meter.max=job.total;}row.appendChild(meter);}
+      var operations=node('div',undefined,'toolbar');
+      if(job.state==='ready'){
+        var label=node('label','合并选择'),check=node('input');check.type='checkbox';check.checked=taskSelections.has(job.id);
+        check.addEventListener('change',function(){if(check.checked)taskSelections.add(job.id);else taskSelections.delete(job.id);refreshPanel();});label.appendChild(check);operations.appendChild(label);
+        var link=node('a','保存此集');link.href='/api/downloads/'+job.id+'/file';link.setAttribute('download','');operations.appendChild(link);
+      }
+      function command(name,label){operations.appendChild(action(label,async function(){if(name==='delete'&&!window.confirm('删除此任务及服务器文件？'))return;await mutate('/api/downloads/'+job.id,{command:name});taskSelections.delete(job.id);await refreshPanel();}));}
+      if(['queued','downloading'].includes(job.state))command('cancel','取消');
+      if(['failed','cancelled'].includes(job.state))command('retry','重试');
+      command('delete','删除任务/文件');row.appendChild(operations);target.appendChild(row);
+    });
+  }
+  async function refreshPanel() {
+    var kind = panelKind, ticket = ++panelSequence;
+    try {
+      if (!kind || kind === 'account' || !currentUser) return;
+      var data = await api(kind === 'admin' ? '/api/admin/downloads' : '/api/downloads');
+      var summary, users;
+      if(kind==='admin'){var extra=await Promise.all([api('/api/admin/summary'),api('/api/admin/users')]);summary=extra[0];users=extra[1].items;}
+      if(ticket!==panelSequence || kind!==panelKind || !currentUser)return;
+      var target=byId('panel-body');target.innerHTML='';
+      if(kind==='admin')renderAdmin(target,summary,users);
+      var names={};if(users)users.forEach(function(user){names[user.id]=user.username;});
+      if(kind==='admin')target.appendChild(node('h3','全站下载任务'));
+      renderTasks(target,data.items,data.usage,kind==='admin'?names:null);
+    }catch(error){if(ticket===panelSequence)report(error);}
+  }
+  function renderAdmin(target,summary,users) {
+    target.appendChild(action('刷新后台状态',refreshPanel));
+    target.appendChild(node('p',summary.users+' 个用户 · '+summary.activeSessions+' 个有效会话 · 取流服务'+(summary.upstream.ready?'就绪':'未就绪')));
+    if(summary.upstream.cache)target.appendChild(node('p','播放缓存：'+summary.upstream.cache.files+' 个文件 / '+summary.upstream.cache.mb+' MB','muted'));
+    var form=node('form'),name=field(form,'新用户名'),pass=field(form,'初始密码','password'),role=node('select');
+    ['user','admin'].forEach(function(value){var option=node('option',value==='admin'?'管理员':'普通用户');option.value=value;role.appendChild(option);});form.appendChild(role);
+    var submit=node('button','创建用户');submit.type='submit';form.appendChild(submit);
+    form.addEventListener('submit',async function(event){event.preventDefault();submit.disabled=true;try{await mutate('/api/admin/users',{username:name.value.trim(),password:pass.value,role:role.value});await refreshPanel();toast('用户已创建');}catch(error){report(error);}finally{submit.disabled=false;}});
+    target.appendChild(node('h3','用户管理'));target.appendChild(form);
+    users.forEach(function(user){
+      var row=node('div',undefined,'task');row.appendChild(node('strong',user.username+(user.disabled?' · 已停用':'')));
+      var tools=node('div',undefined,'toolbar'),roles=node('select');
+      ['user','admin'].forEach(function(value){var option=node('option',value);option.value=value;roles.appendChild(option);});roles.value=user.role;tools.appendChild(roles);
+      tools.appendChild(action('保存角色',async function(){await mutate('/api/admin/users/'+user.id,{role:roles.value},'PATCH');await refreshPanel();}));
+      tools.appendChild(action(user.disabled?'启用账号':'停用账号',async function(){if(!window.confirm('确认'+(user.disabled?'启用':'停用')+' '+user.username+'？'))return;await mutate('/api/admin/users/'+user.id,{disabled:!user.disabled},'PATCH');await refreshPanel();}));
+      var reset=node('input');reset.type='password';reset.placeholder='新密码（至少十位）';reset.autocomplete='new-password';reset.maxLength=128;tools.appendChild(reset);
+      tools.appendChild(action('重置密码',async function(){await mutate('/api/admin/users/'+user.id,{password:reset.value},'PATCH');reset.value='';toast('密码已重置，原会话已失效');await refreshPanel();}));row.appendChild(tools);target.appendChild(row);
+    });
+    var logs=node('details');logs.appendChild(node('summary','最近管理操作'));
+    summary.audit.forEach(function(entry){logs.appendChild(node('p',new Date(entry.created_at).toLocaleString()+' · '+(entry.username||entry.actor)+' · '+entry.action+' · '+entry.target,'muted'));});target.appendChild(logs);
+  }
+  setInterval(function(){if(panelKind==='downloads')refreshPanel();},3000);
+
+  initAuth();
   poll();
   setInterval(poll, 15000);
 })();

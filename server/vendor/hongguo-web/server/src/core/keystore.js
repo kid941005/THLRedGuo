@@ -16,7 +16,7 @@ const Crypto = require('../util/crypto');
 const Log = require('../util/log');
 
 /** 固定位于 server/config（与 config.json 同目录）。 */
-const KEYS_FILE = path.join('server', 'config', 'apikeys.json');
+const KEYS_FILE = process.env.HONGGUO_KEY_FILE || path.join('server', 'config', 'apikeys.json');
 
 /** 密钥记录。 */
 class Rec {
@@ -80,7 +80,9 @@ class KeyStore {
       if (this._adminToken !== '') out.admin_token = this._adminToken;
       // device_id 同理：只有显式设置过才写
       if (this._deviceId !== '') out.device_id = this._deviceId;
-      fs.writeFileSync(this.file, Json.stringifyPretty(out));
+      const tmp = this.file + '.tmp';
+      fs.writeFileSync(tmp, Json.stringifyPretty(out), { mode: 0o600 });
+      fs.renameSync(tmp, this.file);
     } catch (e) {
       Log.warn('写入密钥文件失败（仅内存生效）: ' + e.message);
     }
