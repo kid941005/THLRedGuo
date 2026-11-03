@@ -41,7 +41,7 @@ test('persistent empty bodies are classified, bounded and cooled without rotatin
   const context = scenario(t, empty);
   await assert.rejects(context.app.fetch('123', 'best'), error => {
     assert.equal(error.code, 'PLAYBACK_EMPTY_RESPONSE');
-    assert.deepEqual(error.diagnostic, { http_status: 200, body_bytes: 0, content_type: 'application/json', log_id: 'safe-log-123' });
+    assert.deepEqual(error.diagnostic, { http_status: 200, body_bytes: 0, content_type: 'application/json', log_id: 'safe-log-123', host:'api5-normal-hl.fqnovel.com' });
     assert.match(error.message, /60 秒/); assert.doesNotMatch(error.message, /原始响应/); return true;
   });
   await assert.rejects(context.app.fetch('124', 'best'), error => error.code === 'PLAYBACK_EMPTY_RESPONSE');

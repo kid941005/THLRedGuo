@@ -290,19 +290,23 @@ async function postPlayback(body, identity, host = VIDEO_API_HOST) {
   const res = await Http.send({
     ...request, method: 'POST', timeoutMs: 15000, followRedirect: false,
   });
+  function failure(code, message, text = '') {
+    const error = playbackError(code, message, res, text);
+    error.diagnostic.host = host; return error;
+  }
   if (res.status !== 200) {
-    throw playbackError('PLAYBACK_HTTP_ERROR', '上游播放接口 HTTP ' + res.status, res);
+    throw failure('PLAYBACK_HTTP_ERROR', '上游播放接口 HTTP ' + res.status);
   }
   const text = res.text();
-  if (text.length === 0) throw playbackError('PLAYBACK_EMPTY_RESPONSE', '上游播放接口返回空响应（HTTP 200、正文 0 字节）', res, text);
+  if (text.length === 0) throw failure('PLAYBACK_EMPTY_RESPONSE', '上游播放接口返回空响应（HTTP 200、正文 0 字节）', text);
   let j;
   try { j = Json.parseObject(text); }
-  catch (_) { throw playbackError('PLAYBACK_INVALID_RESPONSE', '上游播放接口返回无法解析的数据', res, text); }
+  catch (_) { throw failure('PLAYBACK_INVALID_RESPONSE', '上游播放接口返回无法解析的数据', text); }
   if (Json.optInt(j.Code, 0) !== 0 || Json.optInt(j.code, 0) !== 0) {
-    throw playbackError('PLAYBACK_BUSINESS_ERROR', '上游播放接口拒绝请求（业务码 ' + Json.optInt(j.Code, Json.optInt(j.code, 0)) + '）', res, text);
+    throw failure('PLAYBACK_BUSINESS_ERROR', '上游播放接口拒绝请求（业务码 ' + Json.optInt(j.Code, Json.optInt(j.code, 0)) + '）', text);
   }
   if (j === null || Json.optObj(j.data) === null) {
-    throw playbackError('PLAYBACK_MISSING_DATA', '上游播放接口响应缺少 data，需核对接口版本与响应结构', res, text);
+    throw failure('PLAYBACK_MISSING_DATA', '上游播放接口响应缺少 data，需核对接口版本与响应结构', text);
   }
   return j;
 }

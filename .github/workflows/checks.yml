@@ -63,7 +63,7 @@ jobs:
       - name: Check web and internal API
         run: node tools/container_smoke.cjs http://127.0.0.1:8080
       - name: Verify media pipeline inside Alpine image
-        run: docker run --rm --init --entrypoint node -v "$PWD/tests:/app/tests:ro" thlredguo-gateway:ci --test /app/tests/runtime.test.cjs /app/tests/media.test.cjs /app/tests/api.test.cjs /app/tests/playback-response.test.cjs /app/tests/application.test.cjs /app/tests/supervisor.test.cjs /app/tests/web.test.cjs /app/tests/gateway.test.cjs /app/tests/ffmpeg.test.cjs
+        run: docker run --rm --init --entrypoint node -v "$PWD/tests:/app/tests:ro" thlredguo-gateway:ci --test /app/tests/runtime.test.cjs /app/tests/media.test.cjs /app/tests/api.test.cjs /app/tests/playback-response.test.cjs /app/tests/diagnostic-identity.test.cjs /app/tests/application.test.cjs /app/tests/supervisor.test.cjs /app/tests/web.test.cjs /app/tests/gateway.test.cjs /app/tests/ffmpeg.test.cjs
       - name: Logs and cleanup
         if: always()
         run: |

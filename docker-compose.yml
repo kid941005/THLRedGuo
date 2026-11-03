@@ -15,7 +15,7 @@ name: thlredguo
 
 services:
   gateway:
-    image: ghcr.io/kid941005/thlredguo-gateway:v1.4.1
+    image: ghcr.io/kid941005/thlredguo-gateway:v1.4.2
     container_name: thlredguo-gateway
     # 让内置子进程被正确回收、SIGTERM 能转发
     init: true

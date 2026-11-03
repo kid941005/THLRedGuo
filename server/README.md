@@ -80,6 +80,8 @@ node tools/container_smoke.cjs http://127.0.0.1:8080
 
 ### 所有分集报空响应
 
+v1.4.2 同时修复目录请求协议与错误分类。仅“点击分类”失败时可在宿主机执行 `docker exec thlredguo-gateway node /app/server/tools/playback-diagnose.cjs --catalog`，输出分类结果，不下载媒体。
+
 v1.4.1 已将播放请求切换到独立维护的当前签名协议。若旧版显示“App 接口未返回 data（空响应，疑似设备身份被拒）”，先将 Compose 的 image 更新为 v1.4.1，然后 pull/up；无需删除数据卷或设备身份。
 
 持续失败时，v1.4.1 会在网页与容器日志提供 PLAYBACK_EMPTY_RESPONSE 等错误码，以及 HTTP 状态、正文长度、content-type 和上游 log-id；不输出设备 ID、Cookie 或正文。空响应只用原身份补试一次备用域名，连续失败冷却六十秒，避免反复点击刷新请求。
@@ -97,6 +99,14 @@ docker compose exec gateway node /app/server/tools/playback-diagnose.cjs 分集v
 ```
 
 取流诊断会复用已有播放身份（没有身份时正常注册），仅输出是否取得片源及脱敏错误，不下载视频。根路径 HTTP 404/504 只能说明该根路径的响应，不能单独用来判断业务接口风控或播放失败原因。
+
+如果升级后仍有 PLAYBACK_EMPTY_RESPONSE，使用以下对照命令。它先用已有身份测试，再在临时目录注册一个隔离身份测试同一分集，结束后清理临时目录，不替换原身份：
+
+```bash
+docker exec thlredguo-gateway node /app/server/tools/playback-diagnose.cjs 7693917197759958040 --compare --catalog
+```
+
+若只有临时身份成功，可进一步核对已有身份；如果二者都失败，单独重置身份没有改善证据，应对比出口网络和协议指纹。诊断只显示代理环境变量是否存在，不输出代理地址或凭据。程序不会因空响应自动更换身份。
 
 播放每二十秒刷新成品租约（四十五秒保护窗口），播放后段预准备下一集。后台下载与推测准备使用 background=1，忙时不会抢占前台请求的排队位置；已开始的下载/解密不能被强制抢占。准备响应包含 stage（排队、下载、解密或封装），网页先短间隔探测再退回普通轮询。
 

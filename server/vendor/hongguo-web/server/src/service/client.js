@@ -25,6 +25,7 @@ const Device = require('../core/device');
 const Safeguards = require('../core/safeguards');
 const PureSign = require('../core/pure-sign');
 const WebSource = require('../service/web-source');
+const MetadataSign = require('../core/playback-sign');
 
 // ==================== 配置装载 ====================
 //
@@ -222,6 +223,29 @@ function buildHeaders(body) {
 
 /** 单次 API 调用（不含重试）。 */
 async function apiOnce(method, pathname, body, extraQuery, signed) {
+  const metadataPath = pathname === '/reading/distribution/category/landpage/v' ? pathname + '/' : pathname;
+  const isMetadata = ['/reading/distribution/category/landpage/v/', '/reading/bookapi/bookmall/cell/change/v'].includes(metadataPath);
+  if (isMetadata) {
+    const request = MetadataSign.signedMetadataRequest(metadataPath, extraQuery || {}, body, IDENTITY);
+    await Safeguards.throttle().wait();
+    const response = await Http.send({ ...request, method, timeoutMs: 12000, followRedirect: false });
+    const text = response.text();
+    function failure(code, message) {
+      const error = new Safeguards.UpstreamResponseError(message);
+      error.code = code;
+      error.diagnostic = { endpoint: metadataPath, host: new URL(request.url).hostname, http_status: response.status,
+        body_bytes: Buffer.byteLength(text), log_id: String(response.header?.('x-tt-logid') || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0,100) };
+      return error;
+    }
+    if (response.status !== 200) throw failure('CATALOG_HTTP_ERROR', '上游目录接口 HTTP ' + response.status);
+    if (!text.trim()) throw failure('CATALOG_EMPTY_RESPONSE', '上游目录接口返回空响应，不能确定是网络、身份还是接口限制');
+    let result;
+    try { result = Json.parseObject(text); } catch (_) { throw failure('CATALOG_INVALID_RESPONSE', '上游目录接口未返回有效 JSON'); }
+    const code = Number(result.code ?? result.Code ?? 0);
+    if (code !== 0) { const error = failure('CATALOG_BUSINESS_ERROR', '上游目录接口拒绝请求（业务码 ' + (Number.isFinite(code) ? code : '未知') + '）'); error.safeResponse = {code}; throw error; }
+    if (!Json.optObj(result.data)) throw failure('CATALOG_MISSING_DATA', '上游目录接口响应缺少 data');
+    return result;
+  }
   let url = buildUrl(pathname, extraQuery);
   const built = buildHeaders(body);
   const headers = built.headers;
@@ -291,6 +315,7 @@ async function api(method, pathname, body, extraQuery, maxRetries, signed) {
           await Safeguards.sleep(wait * 1000);
         }
       } else if (e instanceof Safeguards.UpstreamResponseError) {
+        if (/^CATALOG_/.test(e.code || '')) throw e;
         if (MANAGED) throw e;
         last = e;
         await Safeguards.sleep(1500 * (attempt + 1));

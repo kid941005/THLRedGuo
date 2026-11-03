@@ -158,4 +158,33 @@ function playbackRequest(payload, identity, host = new URL(VIDEO_API).hostname) 
 }
 
 
-module.exports = { playbackRequest, branchOf };
+function signedMetadataRequest(apiPath, values = {}, payload = null, identity) {
+    const metadataDevice = { ...DEVICE, version_code: '73532', version_name: '7.3.5.32', manifest_version_code: '73532',
+    update_version_code: '73532', pv_player: '73532', iid: '0', device_id: identity.deviceId };
+    if (!['/reading/distribution/category/landpage/v/', '/reading/bookapi/bookmall/cell/change/v'].includes(apiPath)) {
+        throw new Error('不支持的 App 目录接口');
+    }
+    const body = payload === null ? null : Buffer.from(JSON.stringify(payload));
+    const khronos = Math.floor(Date.now() / 1000), ticketBase = Date.now();
+    let query, url, requestTicket;
+    for (let n = 0; n < 128; n += 1) {
+        requestTicket = ticketBase + n;
+        query = pythonUrlEncode({ ...values, ...metadataDevice, ts: String(khronos), _rticket: String(requestTicket) });
+        url = `https://api5-normal-sinfonlineb.fqnovel.com${apiPath}?${query}`;
+        if (branchOf(url, body, khronos) === 0) break;
+        if (n === 127) throw new Error('无法生成 App 目录请求签名');
+    }
+    const headers = {
+        'User-Agent': VIDEO_UA.replace('71332', '73532'), Accept: 'application/json', 'Accept-Encoding': 'identity',
+        'x-xs-from-web': '0', 'sdk-version': '2', 'x-ss-dp': '8662', 'x-tt-store-region': 'cn', 'x-tt-store-region-src': 'did',
+        'x-ss-req-ticket': String(requestTicket), 'x-khronos': String(khronos),
+        'x-gorgon': xGorgon(query, body, khronos, Math.floor(Math.random() * 65536)),
+        'x-ladon': be32(khronos).toString('base64'), 'x-argus': le32(khronos).toString('base64'),
+        'x-helios': helios(khronos), 'x-medusa': buildMedusa(url, body, khronos, metadataDevice), 'x-tt-dt': '',
+    };
+    if (body) { headers['Content-Type'] = 'application/json; charset=utf-8'; headers['x-ss-stub'] = md5(body); }
+    return { url, headers, body };
+}
+
+
+module.exports = { playbackRequest, signedMetadataRequest, branchOf };

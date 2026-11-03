@@ -44,6 +44,36 @@ test('real browse parser follows upstream cursor and filters seen ids', async t 
   assert.equal(requests[0].offset, 18); assert.equal(requests[0].filter_ids, '100');
 });
 
+test('catalog requests use the current signed profile and stable directory identity',async t=>{
+  const requests=[];
+  mock(t,Http,'send',async req=>{requests.push(req);return {status:200,text:()=>JSON.stringify({code:0,data:{video_data:[{series_id:'998',title:'catalog'}],has_more:false,next_offset:1}})};});
+  await Client.browsePage('ai_series',{limit:18},[],0);await Client.browsePage('short_play',{limit:18},[],0);
+  const urls=requests.map(request=>new URL(request.url));
+  assert.equal(urls[0].pathname,'/reading/distribution/category/landpage/v/');
+  assert.equal(urls[0].hostname,'api5-normal-sinfonlineb.fqnovel.com');
+  assert.equal(urls[0].searchParams.get('version_code'),'73532');
+  assert.equal(urls[0].searchParams.get('device_id'),urls[1].searchParams.get('device_id'));
+  for(const request of requests){
+    assert.equal(request.followRedirect,false);assert.ok(request.headers['x-medusa']);assert.ok(request.headers['x-gorgon']);
+    assert.equal(load('core/playback-sign').branchOf(request.url,request.body,Number(request.headers['x-khronos'])),0);
+  }
+});
+
+test('catalog transport and business failures never masquerade as an empty successful page',async t=>{
+  const cases=[
+    {status:502,text:()=>'',expected:'CATALOG_HTTP_ERROR'},
+    {status:200,text:()=>'',expected:'CATALOG_EMPTY_RESPONSE'},
+    {status:200,text:()=>'<html>sensitive-content</html>',expected:'CATALOG_INVALID_RESPONSE'},
+    {status:200,text:()=>JSON.stringify({code:100103}),expected:'CATALOG_BUSINESS_ERROR'},
+    {status:200,text:()=>JSON.stringify({code:0}),expected:'CATALOG_MISSING_DATA'},
+  ];
+  let calls=0,index=0;mock(t,Http,'send',async()=>{calls++;return cases[index];});
+  for(index=0;index<cases.length;index++){
+    await assert.rejects(Client.browsePage('ai_series',{limit:18},[],0),error=>{assert.equal(error.code,cases[index].expected);assert.equal(error.diagnostic.endpoint,'/reading/distribution/category/landpage/v/');assert.doesNotMatch(error.message,/sensitive-content/);return true;});
+  }
+  assert.equal(calls,cases.length,'protocol failures do not cause repeated requests');
+});
+
 test('last upstream page still exposes locally buffered search results', () => {
   const results = Array.from({length: 30}, (_,i) => i);
   assert.equal(Client.Page.slice(results, 0, 18, false).hasMore, true);

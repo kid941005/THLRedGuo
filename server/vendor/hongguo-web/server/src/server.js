@@ -212,11 +212,13 @@ class Server {
       const isAuth = e instanceof Safeguards.AuthExpiredError;
       const m = Json.obj();
       m.detail = String(e && e.message !== null && e.message !== undefined ? e.message : e);
+      if (/^[A-Z0-9_]{1,80}$/.test(e.code || '')) m.error_code = e.code;
       if (e instanceof Safeguards.ApiError) {
         if (e.safeResponse !== null && e.safeResponse !== undefined) m.safe_response = e.safeResponse;
         if (e.diagnostic !== null && e.diagnostic !== undefined) m.response = e.diagnostic;
         if (e.modelShape !== null && e.modelShape !== undefined) m.model_shape = e.modelShape;
       }
+      Log.warn('[api] ' + JSON.stringify({ code: m.error_code || e.name || 'API_ERROR', diagnostic: e.diagnostic || null }));
       Res.json(req, res, isAuth ? 401 : 502, m);
     }
   }

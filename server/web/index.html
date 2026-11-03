@@ -255,8 +255,9 @@
       if (!r.ok) {
         return r.text().then(function (t) {
           var detail = '';
-          try { var j = JSON.parse(t); detail = j.detail || j.error || ''; } catch (e) {}
-          throw new Error('HTTP ' + r.status + (detail ? ' · ' + detail : ''));
+          try { var j = JSON.parse(t); detail = (j.error_code ? '[' + j.error_code + '] ' : '') + (j.detail || j.error || ''); } catch (e) {}
+          if (!detail && r.status === 502) detail = '网关或反向代理未取得有效上游响应，请检查容器日志';
+          throw new Error('HTTP ' + r.status + ' · ' + path.split('?')[0] + (detail ? ' · ' + detail : ''));
         });
       }
       return r.json();
